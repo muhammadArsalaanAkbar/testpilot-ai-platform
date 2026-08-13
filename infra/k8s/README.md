@@ -156,6 +156,109 @@ success."
      testpilot-frontend=ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-frontend@sha256:<digest>
    ```
 
+### External Secrets Operator (alternative)
+
+Step 5 above ("Secrets") describes **Option A**: Kustomize's own `secretGenerator`, reading a
+gitignored `secrets.env` file. `overlays/production/external-secret.yaml.example` is **Option
+B**: an [External Secrets Operator](https://external-secrets.io/) (ESO) `ExternalSecret` example
+that produces the exact same `testpilot-secrets` Secret a different way — by pulling values from
+a real external secrets manager into the cluster, rather than from a local file at render time.
+
+**What it's doing**: ESO runs a controller in the cluster that watches `ExternalSecret` resources,
+fetches the values each one's `data[].remoteRef` points to from whatever `SecretStore`/
+`ClusterSecretStore` it references, and writes them into a real Kubernetes `Secret` (here, still
+named `testpilot-secrets` — `base/deployments.yaml`'s `secretRef: name: testpilot-secrets` needs
+no change no matter which option produces it). `refreshInterval: 1h` means ESO re-fetches and
+updates the Secret periodically, so rotating a credential in the external manager propagates to
+the cluster without a redeploy — something Option A's one-shot `secretGenerator` render cannot do.
+
+**Prerequisites this repo does not provide** (deliberately — see the "Do NOT install or configure
+a real external secret provider" scope note this file's own header inherits from `base/`'s "not
+here" list):
+
+1. **ESO itself must already be installed** in the target cluster (its own Helm chart/manifests —
+   not something `infra/k8s/` includes, since it's cluster-wide infrastructure, not
+   application-specific).
+2. **A real `SecretStore` or `ClusterSecretStore` must already exist**, configured for whichever
+   secrets manager you actually use (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault,
+   HashiCorp Vault, etc. — ESO supports all of these and more via provider-specific `SecretStore`
+   config). `external-secret.yaml.example`'s `secretStoreRef.name: replace-me-secret-store-name`
+   is a syntactically valid but entirely fake placeholder (it must pass Kubernetes' own resource-name
+   validation, hence lowercase-hyphenated rather than `REPLACE_ME_...` like this repo's other
+   placeholders) — not a `SecretStore` this repo creates or assumes exists.
+3. **The real secret values must already live in that external secrets manager**, at whatever
+   paths/keys you choose — `external-secret.yaml.example`'s `remoteRef.key` values
+   (`testpilot/production/database-url` etc.) are illustrative path shapes, not real locations.
+
+**How the mapping works**: each `data[]` entry's `secretKey` (left side) is the key that appears
+in the resulting Kubernetes `Secret` — these are not illustrative, they match
+`secrets.env.example`/`base/config.yaml`'s Secret keys exactly (`DATABASE_URL`,
+`MIGRATIONS_DATABASE_URL`, `REDIS_URL`, `JWT_SIGNING_KEY`, `AI_PROVIDER_API_KEY`,
+`OBJECT_STORAGE_ENDPOINT_URL`, `OBJECT_STORAGE_ACCESS_KEY`, `OBJECT_STORAGE_SECRET_KEY`,
+`SENTRY_DSN`, `SMTP_HOST` — the same ten keys `testpilot.core.config.Settings` reads via
+`envFrom: secretRef:`). Each entry's `remoteRef` (right side) is where ESO fetches that one
+value from in your real secrets manager — this part genuinely is provider-specific and this repo
+cannot pre-fill it. A provider-neutral illustrative `SecretStore` shape (not committed as an
+applyable resource anywhere in this repo, since it would either be misleadingly fake or require
+picking one specific provider this repo doesn't commit to):
+
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: replace-me-secret-store-name
+spec:
+  provider:
+    # One of ESO's supported provider blocks goes here instead --
+    # awsSecretsManager, gcpSecretManager, azurekv, vault, etc. Each has
+    # its own auth/config shape; see https://external-secrets.io/latest/provider/
+    REPLACE_ME_PROVIDER_BLOCK: {}
+```
+
+**Only one option may be active at a time** (requirement: never two competing Secret resources).
+To switch from Option A to Option B:
+
+1. `mv overlays/production/external-secret.yaml.example overlays/production/external-secret.yaml`
+2. Add `- external-secret.yaml` to `kustomization.yaml`'s `resources:` list.
+3. **Delete** the `secretGenerator:` block from `kustomization.yaml` entirely — leaving both
+   active means Kustomize's generator and ESO's controller would both try to own
+   `testpilot-secrets`, and whichever applies/reconciles last wins non-deterministically.
+4. Fill in `external-secret.yaml`'s real `secretStoreRef.name` and every `remoteRef.key`.
+5. Confirm ESO and a real `SecretStore`/`ClusterSecretStore` already exist in the target cluster
+   (steps 1-2 above) — `kubectl apply -k` will fail at the `ExternalSecret` resource, clearly, if
+   the CRD isn't installed; it will not silently do nothing.
+
+**Example deployment flow with Option B enabled**:
+
+```sh
+# 1. (Cluster operator, once, outside this repo): install ESO, create a
+#    SecretStore/ClusterSecretStore, populate the real secrets manager.
+# 2. Render/validate (does NOT require ESO installed locally -- this is
+#    just YAML rendering, no live cluster call):
+kubectl kustomize infra/k8s/overlays/production/
+# 3. Apply -- ESO's controller (already running in-cluster) picks up the
+#    ExternalSecret and creates/updates the testpilot-secrets Secret:
+kubectl apply -k infra/k8s/overlays/production/
+# 4. Verify ESO actually synced it:
+kubectl -n testpilot-production get externalsecret testpilot-secrets
+kubectl -n testpilot-production describe externalsecret testpilot-secrets   # SecretSynced condition
+```
+
+**Validation note**: `kubeconform`'s built-in schemas cover core Kubernetes resources only, not
+CRDs like `ExternalSecret` — validating it needs an extra schema source. Confirmed working:
+
+```sh
+cat infra/k8s/overlays/production/external-secret.yaml.example | docker run --rm -i ghcr.io/yannh/kubeconform:latest \
+  -strict -summary \
+  -schema-location default \
+  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+# stdin - ExternalSecret testpilot-secrets is valid
+```
+
+This is a separate, explicit validation step from the main overlay's own `kubeconform` run above
+(step 10's "Validating locally") — `external-secret.yaml.example` is not part of `resources:` by
+default, so the main overlay's validation neither depends on nor covers it.
+
 ### Deploying
 
 ```sh

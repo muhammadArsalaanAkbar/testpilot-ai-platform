@@ -111,7 +111,9 @@ operator to supply real values for the domain, TLS, object storage endpoint, and
    deploying (`infra/k8s/README.md`'s "Configuring the production overlay" step 6 has the exact
    `docker buildx imagetools inspect` / `kustomize edit set image` commands).
 3. Set the real domain (`infra/k8s/README.md` step 1), ingress controller (step 2), TLS (step 3),
-   public object storage endpoint (step 4 — see the known gap below), and secrets (step 5).
+   public object storage endpoint (step 4 — see the known gap below), and secrets (step 5 —
+   Kustomize's `secretGenerator`, or the External Secrets Operator alternative documented right
+   after it, not both at once).
 4. `kubectl apply -k infra/k8s/overlays/production/`
 5. Point `frontend.Dockerfile`'s `NEXT_PUBLIC_API_BASE_URL` build ARG at the real API's public
    URL when building the frontend image for this environment (it is baked in at image-build
