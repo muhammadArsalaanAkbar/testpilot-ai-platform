@@ -1,0 +1,141 @@
+# Local development stack (quickstart.md Sections 1-2, research.md #16).
+# `cp .env.example .env` in this directory first, then `docker compose up`
+# from here (or `docker compose -f infra/docker/docker-compose.yml up`
+# from the repo root).
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6381:6379"
+    # Deliberately no persistent volume: Redis here is purely the ephemeral
+    # job queue (RQ) + rate-limit counters (slowapi) + cache (core/cache.py)
+    # — none of which should survive a restart, and none of which are
+    # backed up elsewhere. Without this, the redis:7 image's own `VOLUME
+    # ["/data"]` Dockerfile instruction makes Docker silently provision an
+    # anonymous volume that `docker compose down` (without `-v`) does NOT
+    # remove — stale RQ worker registrations and job state from a previous
+    # session then load back in via Redis's own RDB snapshot on next
+    # startup, producing confusing "job enqueued but never processed"
+    # symptoms that have nothing to do with the application itself
+    # (found and root-caused during Phase 26 E2E validation). `tmpfs`
+    # guarantees a genuinely clean slate on every container start.
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${OBJECT_STORAGE_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${OBJECT_STORAGE_SECRET_KEY}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # T224: one-shot bucket provisioning, per storage/s3.py's own docstring
+  # ("bucket provisioning is deliberately NOT this adapter's job").
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      OBJECT_STORAGE_ENDPOINT_URL: http://minio:9000
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET}
+    volumes:
+      - ./minio-init.sh:/minio-init.sh:ro
+    entrypoint: ["/bin/sh", "/minio-init.sh"]
+    restart: "no"
+
+  # INT-003's local mail catcher (quickstart.md Section 3, forgot-password
+  # validation) — SMTP_HOST=mailhog in .env.example.
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/backend.Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/healthz')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/backend.Dockerfile
+    command: ["testpilot-worker"]
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      # Waits on the api container's own healthcheck (not just "started")
+      # specifically so its own `alembic upgrade head` (backend-entrypoint.sh,
+      # run by both containers per quickstart.md Section 2) always finds
+      # migrations already applied by api first, rather than racing it.
+      api:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: ../infra/docker/frontend.Dockerfile
+    depends_on:
+      - api
+    ports:
+      - "3200:3200"
+
+volumes:
+  postgres_data:
+  minio_data:

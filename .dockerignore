@@ -1,0 +1,22 @@
+# Applies to the backend image build's context (infra/docker/docker-compose.yml
+# sets `context: ../..`, the repo root, so backend.Dockerfile can also COPY
+# infra/docker/backend-entrypoint.sh — everything below keeps that wider
+# context from sending huge/irrelevant directories to the Docker daemon).
+.git
+backend/.venv
+backend/__pycache__
+backend/**/__pycache__
+backend/*.pyc
+backend/.pytest_cache
+backend/.mypy_cache
+backend/.ruff_cache
+backend/.coverage
+backend/coverage.xml
+backend/.env
+backend/.env.test
+backend/tests
+backend/scripts
+backend/openapi.json
+frontend/node_modules
+frontend/.next
+frontend/test-results

@@ -1,0 +1,58 @@
+# T231 (Phase 25, Kubernetes Readiness): non-secret configuration and
+# credential templates for the api/worker Deployments (deployments.yaml).
+# Every key here matches a field on backend/src/testpilot/core/config.py's
+# `Settings` class one-for-one (pydantic-settings reads env vars named
+# after the field, upper-cased) — env var names below are not arbitrary.
+#
+# SEC-004: "All secrets ... MUST be injected via a secrets-management
+# mechanism at deploy time, never committed to source control." The
+# Secret below is a TEMPLATE only — every value is a placeholder, the same
+# convention infra/docker/.env.example already uses for local Docker
+# Compose. A real deployment MUST replace these via a real secrets
+# manager (e.g. External Secrets Operator, Sealed Secrets, or a
+# CI/CD-injected `kubectl create secret` at deploy time) — this file is
+# never meant to be applied to a real cluster as-is.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testpilot-config
+data:
+  ENVIRONMENT: "production"
+  JWT_ACCESS_TOKEN_TTL_MINUTES: "15"
+  REFRESH_TOKEN_TTL_DAYS: "30"
+  AI_PROVIDER: "cloud"
+  AI_PROVIDER_MODEL: "claude-sonnet-5"
+  OBJECT_STORAGE_BUCKET: "testpilot-artifacts"
+  OBJECT_STORAGE_REGION: "us-east-1"
+  # Unset (falls back to log-only, per core/config.py's own smtp_host
+  # docstring) unless a real transactional-email relay is configured for
+  # this environment.
+  SMTP_PORT: "587"
+  EMAIL_FROM_ADDRESS: "no-reply@testpilot.invalid"
+  CORS_ALLOWED_ORIGINS: '["https://testpilot.example.com"]'
+  ARTIFACT_RETENTION_DAYS: "90"
+  WORKER_METRICS_PORT: "9200"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: testpilot-secrets
+type: Opaque
+stringData:
+  # postgresql+asyncpg://testpilot_app:<password>@<host>/<db> — the
+  # least-privilege runtime role (RLS only applies to a non-superuser,
+  # non-table-owner connection — see the rls_role_and_policies migration).
+  DATABASE_URL: "REPLACE_ME_DATABASE_URL"
+  # Needs DDL/role-management privileges database_url's role deliberately
+  # does not have — used only by the entrypoint's `alembic upgrade head`.
+  MIGRATIONS_DATABASE_URL: "REPLACE_ME_MIGRATIONS_DATABASE_URL"
+  REDIS_URL: "REPLACE_ME_REDIS_URL"
+  # Generate with: python -c "import secrets; print(secrets.token_urlsafe(48))"
+  JWT_SIGNING_KEY: "REPLACE_ME_JWT_SIGNING_KEY_MIN_32_CHARS"
+  AI_PROVIDER_API_KEY: "REPLACE_ME_AI_PROVIDER_API_KEY"
+  OBJECT_STORAGE_ENDPOINT_URL: "REPLACE_ME_OBJECT_STORAGE_ENDPOINT_URL"
+  OBJECT_STORAGE_ACCESS_KEY: "REPLACE_ME_OBJECT_STORAGE_ACCESS_KEY"
+  OBJECT_STORAGE_SECRET_KEY: "REPLACE_ME_OBJECT_STORAGE_SECRET_KEY"
+  SENTRY_DSN: ""
+  SMTP_HOST: "REPLACE_ME_SMTP_HOST"

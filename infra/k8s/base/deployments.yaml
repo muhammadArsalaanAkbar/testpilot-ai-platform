@@ -1,0 +1,181 @@
+# T229/T232 (Phase 25, Kubernetes Readiness): one Deployment per
+# independently deployable image (plan.md's Kubernetes-Readiness shape —
+# api/worker/frontend, NOT postgres/redis/minio, which a real cluster is
+# expected to consume as externally managed services, e.g. a managed
+# Postgres/Redis/S3 — this base only deploys this project's own three
+# images, matching infra/docker/backend.Dockerfile's/frontend.Dockerfile's
+# scope from Phase 23/24).
+#
+# Image references are deliberately the plain, unqualified names below
+# (not e.g. ghcr.io/<owner>/<repo>-api:sha-...) — Kustomize's own `images:`
+# transformer is the documented mechanism for an environment-specific
+# overlay (infra/k8s/overlays/, not built in this phase per the Phase 25
+# Purpose note: "still not deployed anywhere as part of this task list")
+# to remap these to a real registry/tag without editing this base file.
+#
+# Resource requests/limits below are reasonable small-scale starting
+# points (matching plan.md's "once real production load data exists to
+# tune it" language already used for the HPA hook in README.md) — not
+# load-tested figures.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testpilot-api
+  labels:
+    app: testpilot-api
+spec:
+  # Stateless (session state lives in Postgres/JWT, not in-process, per
+  # plan.md's Scalability & Performance section) — replica count is a
+  # pure capacity knob, independent of worker's (NFR-005).
+  replicas: 2
+  selector:
+    matchLabels:
+      app: testpilot-api
+  template:
+    metadata:
+      labels:
+        app: testpilot-api
+    spec:
+      containers:
+        - name: api
+          image: testpilot-api:latest
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: testpilot-config
+            - secretRef:
+                name: testpilot-secrets
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          # NFR-010: liveness has no dependency checks (api/v1/health.py's
+          # own docstring) — restarts the process only if it is itself
+          # wedged, not if Postgres/Redis are briefly unreachable (that is
+          # readiness's job, below).
+          livenessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/v1/readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testpilot-worker
+  labels:
+    app: testpilot-worker
+spec:
+  # NFR-005/NFR-006: test-execution throughput scales by adding worker
+  # replicas, independent of the api Deployment's own replica count above
+  # — the entire reason worker is its own Deployment rather than a second
+  # container in the api pod.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: testpilot-worker
+  template:
+    metadata:
+      labels:
+        app: testpilot-worker
+    spec:
+      containers:
+        - name: worker
+          image: testpilot-worker:latest
+          # Same image as api (backend.Dockerfile) — only the command
+          # differs, matching infra/docker/docker-compose.yml's `worker`
+          # service and plan.md's "same codebase, different entrypoint/
+          # CMD" description.
+          command: ["testpilot-worker"]
+          ports:
+            - name: metrics
+              containerPort: 9200
+          envFrom:
+            - configMapRef:
+                name: testpilot-config
+            - secretRef:
+                name: testpilot-secrets
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          # plan.md: "an equivalent liveness check on the worker process
+          # (can it reach Redis)" — the worker has no HTTP server of its
+          # own (unlike api) to answer a real /healthz-equivalent; its
+          # only listening port is the Prometheus metrics server
+          # (core/metrics.py, worker/main.py). A bare TCP connect to that
+          # port confirms the process is alive and its embedded HTTP
+          # server is bound — it does NOT itself verify Redis
+          # reachability, a real, documented gap left for whenever a
+          # dedicated worker health-check command is built (out of this
+          # DevOps-only phase's scope, which does not add application code).
+          livenessProbe:
+            tcpSocket:
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 15
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testpilot-frontend
+  labels:
+    app: testpilot-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: testpilot-frontend
+  template:
+    metadata:
+      labels:
+        app: testpilot-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: testpilot-frontend:latest
+          ports:
+            - name: http
+              containerPort: 3200
+          # No envFrom: NEXT_PUBLIC_API_BASE_URL (the only backend-facing
+          # config this image needs) is a Next.js build-time value baked
+          # into the client JS bundle by frontend.Dockerfile's own
+          # NEXT_PUBLIC_API_BASE_URL build ARG (Phase 24) — setting it as
+          # a container env var here at deploy time would have no effect
+          # on the already-built bundle, so nothing is wired here that
+          # would silently do nothing.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10

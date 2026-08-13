@@ -1,0 +1,150 @@
+/**
+ * Design tokens — the single source of truth for color, spacing, radius, and
+ * typography. Components MUST consume these via Tailwind classes generated
+ * from tailwind.config.ts (which reads these variables), never hard-code a
+ * raw hex color, pixel font-size, or ad hoc spacing value (UX-001[a]).
+ *
+ * Theme switching (light/dark) works by swapping which block below applies,
+ * driven by `data-theme` on <html> (see lib/theme-provider.tsx) with
+ * `prefers-color-scheme` as the default before a user override exists.
+ */
+
+:root {
+  /* --- Typography --- */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --text-display: 2rem; /* 32px */
+  --text-heading: 1.5rem; /* 24px */
+  --text-subheading: 1.125rem; /* 18px */
+  --text-body: 0.9375rem; /* 15px */
+  --text-caption: 0.8125rem; /* 13px */
+
+  /* --- Radius --- */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-full: 9999px;
+
+  /* --- Light theme (default) --- */
+  --color-background: 0 0% 100%;
+  --color-foreground: 222 20% 12%;
+  --color-card: 0 0% 100%;
+  --color-card-foreground: 222 20% 12%;
+  --color-border: 220 13% 88%;
+  --color-muted: 220 14% 96%;
+  --color-muted-foreground: 220 9% 46%;
+
+  --color-primary: 243 75% 59%;
+  --color-primary-foreground: 0 0% 100%;
+  --color-secondary: 220 14% 96%;
+  --color-secondary-foreground: 222 20% 12%;
+
+  --color-destructive: 0 72% 51%;
+  --color-destructive-foreground: 0 0% 100%;
+
+  --color-ring: 243 75% 59%;
+
+  /* --- Status (test/run outcome) --- */
+  --color-status-passed: 142 71% 35%;
+  --color-status-passed-bg: 142 71% 95%;
+  --color-status-failed: 0 72% 51%;
+  --color-status-failed-bg: 0 72% 96%;
+  --color-status-skipped: 220 9% 46%;
+  --color-status-skipped-bg: 220 14% 94%;
+  --color-status-running: 217 91% 53%;
+  --color-status-running-bg: 217 91% 96%;
+  --color-status-queued: 38 92% 42%;
+  --color-status-queued-bg: 38 92% 95%;
+  --color-status-error: 24 94% 50%;
+  --color-status-error-bg: 24 94% 95%;
+  --color-status-completed: 220 9% 46%;
+  --color-status-completed-bg: 220 14% 94%;
+
+  /* --- Severity --- */
+  --color-severity-minor: 217 91% 53%;
+  --color-severity-minor-bg: 217 91% 96%;
+  --color-severity-major: 38 92% 42%;
+  --color-severity-major-bg: 38 92% 95%;
+  --color-severity-critical: 24 94% 50%;
+  --color-severity-critical-bg: 24 94% 95%;
+  --color-severity-blocker: 0 72% 51%;
+  --color-severity-blocker-bg: 0 72% 96%;
+
+  /* --- Priority --- */
+  --color-priority-low: 220 9% 46%;
+  --color-priority-low-bg: 220 14% 94%;
+  --color-priority-medium: 217 91% 53%;
+  --color-priority-medium-bg: 217 91% 96%;
+  --color-priority-high: 38 92% 42%;
+  --color-priority-high-bg: 38 92% 95%;
+  --color-priority-critical: 0 72% 51%;
+  --color-priority-critical-bg: 0 72% 96%;
+}
+
+[data-theme="dark"] {
+  --color-background: 222 25% 8%;
+  --color-foreground: 210 20% 92%;
+  --color-card: 222 22% 11%;
+  --color-card-foreground: 210 20% 92%;
+  --color-border: 217 19% 20%;
+  --color-muted: 217 19% 16%;
+  --color-muted-foreground: 216 12% 65%;
+
+  --color-primary: 243 85% 70%;
+  --color-primary-foreground: 222 25% 8%;
+  --color-secondary: 217 19% 16%;
+  --color-secondary-foreground: 210 20% 92%;
+
+  --color-destructive: 0 72% 60%;
+  --color-destructive-foreground: 222 25% 8%;
+
+  --color-ring: 243 85% 70%;
+
+  --color-status-passed: 142 60% 55%;
+  --color-status-passed-bg: 142 40% 14%;
+  --color-status-failed: 0 72% 65%;
+  --color-status-failed-bg: 0 45% 16%;
+  --color-status-skipped: 216 12% 65%;
+  --color-status-skipped-bg: 217 19% 16%;
+  --color-status-running: 217 85% 68%;
+  --color-status-running-bg: 217 45% 16%;
+  --color-status-queued: 38 85% 58%;
+  --color-status-queued-bg: 38 45% 14%;
+  --color-status-error: 24 90% 60%;
+  --color-status-error-bg: 24 50% 15%;
+  --color-status-completed: 216 12% 65%;
+  --color-status-completed-bg: 217 19% 16%;
+
+  --color-severity-minor: 217 85% 68%;
+  --color-severity-minor-bg: 217 45% 16%;
+  --color-severity-major: 38 85% 58%;
+  --color-severity-major-bg: 38 45% 14%;
+  --color-severity-critical: 24 90% 60%;
+  --color-severity-critical-bg: 24 50% 15%;
+  --color-severity-blocker: 0 72% 65%;
+  --color-severity-blocker-bg: 0 45% 16%;
+
+  --color-priority-low: 216 12% 65%;
+  --color-priority-low-bg: 217 19% 16%;
+  --color-priority-medium: 217 85% 68%;
+  --color-priority-medium-bg: 217 45% 16%;
+  --color-priority-high: 38 85% 58%;
+  --color-priority-high-bg: 38 45% 14%;
+  --color-priority-critical: 0 72% 65%;
+  --color-priority-critical-bg: 0 45% 16%;
+}
+
+/* Actual token swapping for "OS preference by default" happens via the
+   `data-theme` attribute, which lib/theme-provider.tsx sets on <html> as
+   soon as it mounts (reading prefers-color-scheme when no stored override
+   exists) and an inline pre-hydration script sets before first paint to
+   avoid a flash of the wrong theme. This block only pre-informs the browser
+   which native color scheme (scrollbars, form controls) to use in the brief
+   window before that attribute is present. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}

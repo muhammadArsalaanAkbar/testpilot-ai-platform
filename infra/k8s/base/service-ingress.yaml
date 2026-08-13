@@ -1,0 +1,70 @@
+# T230 (Phase 25, Kubernetes Readiness): Service + Ingress for api and
+# frontend only, per plan.md's "a Service+Ingress in front of api/frontend"
+# — worker has no inbound HTTP traffic to route (it only consumes jobs
+# from Redis), so it gets neither.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: testpilot-api
+  labels:
+    app: testpilot-api
+spec:
+  selector:
+    app: testpilot-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testpilot-frontend
+  labels:
+    app: testpilot-frontend
+spec:
+  selector:
+    app: testpilot-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: testpilot-ingress
+  annotations:
+    # nginx-ingress-specific rewrite so `/api/v1/...` reaches the api
+    # container unchanged (its own routes are already registered under
+    # `/api/v1`, see api/main.py's `include_router(..., prefix="/api/v1")`
+    # — no path-stripping is actually needed here, but the annotation is
+    # the standard nginx-ingress way to make that explicit/adjustable).
+    # Swap for whatever ingress controller the target cluster actually
+    # runs (ingressClassName below is the same kind of placeholder).
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    # REPLACE_ME: the real hostname a production deployment would use —
+    # matches the same placeholder convention as config.yaml's Secret
+    # values and CORS_ALLOWED_ORIGINS in config.yaml's ConfigMap, which
+    # MUST stay in sync with whatever hostname replaces this one.
+    - host: testpilot.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: testpilot-api
+                port:
+                  name: http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: testpilot-frontend
+                port:
+                  name: http

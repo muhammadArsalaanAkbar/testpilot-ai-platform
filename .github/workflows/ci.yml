@@ -1,0 +1,377 @@
+name: CI
+
+# Grows phase by phase rather than being written all at once:
+#   Phase 20 (Security and Validation Hardening, T208): dependency
+#     vulnerability scanning — backend-dependency-audit, frontend-dependency-audit.
+#   Phase 21 (Automated Testing Infrastructure, T212/T214/T215): the test
+#     and lint gates every earlier phase's test tasks assumed would exist —
+#     backend-tests (Postgres+Redis service containers, coverage report),
+#     frontend-lint (includes the eslint-plugin-jsx-a11y accessibility gate).
+#   Phase 24 (CI/CD, T226-T228): research.md #15's full three-stage shape —
+#     stage 1 (lint + type-check + unit tests, fast, every push):
+#       backend-lint, backend-typecheck, frontend-typecheck, frontend-unit-tests
+#       (backend-lint/backend-typecheck were previously entirely missing from
+#       this file). Backend *unit* tests are NOT a separate no-services job —
+#       tests/conftest.py's autouse fixtures (_clean_db real TRUNCATE,
+#       _clean_queues real Redis FLUSHDB) apply to every backend test
+#       regardless of location, a structural property of the existing suite
+#       this DevOps-only phase does not change — so they run inside
+#       backend-tests alongside integration/contract, which already needs
+#       the same live Postgres+Redis service containers.
+#     stage 2 (integration/contract vs ephemeral Postgres+Redis, every push):
+#       backend-tests (already built in Phase 21/22, unchanged here beyond
+#       comment clarity).
+#     stage 3 (build + push versioned images on merge to main): docker-images.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-dependency-audit:
+    name: Backend dependency vulnerability scan (pip-audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies (including the dev group pip-audit lives in)
+        run: uv sync --frozen --extra dev
+
+      # pip-audit normally introspects an environment via `pip`, but a
+      # `uv sync`-managed venv has no `pip` installed in it at all (uv
+      # replaces pip for installs) — exporting the lockfile to a plain
+      # requirements.txt and auditing *that* sidesteps the missing-pip
+      # problem entirely and is what uv's own docs recommend for this
+      # exact combination.
+      - name: Export locked dependencies
+        run: uv export --format requirements.txt --extra dev --no-hashes -o requirements-audit.txt
+
+      # --strict fails the job on any known vulnerability instead of only
+      # warning — a dependency CVE should block merge, the same as a
+      # failing test would.
+      - name: Run pip-audit
+        run: uv run pip-audit --strict -r requirements-audit.txt
+
+  frontend-dependency-audit:
+    name: Frontend dependency vulnerability scan (npm audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # high/critical only: npm's own advisory database includes a long
+      # tail of low-severity dev-tooling findings that would make this
+      # job flaky/noisy without adding real security signal.
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+
+  backend-lint:
+    name: Backend lint (ruff) — CI/CD stage 1
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Run ruff
+        run: uv run ruff check .
+
+  backend-typecheck:
+    name: Backend type-check (mypy) — CI/CD stage 1
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Run mypy
+        run: uv run mypy src/
+
+  frontend-typecheck:
+    name: Frontend type-check (tsc) — CI/CD stage 1
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tsc
+        run: npx tsc --noEmit
+
+  frontend-unit-tests:
+    name: Frontend unit tests (Vitest) — CI/CD stage 1
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # research.md #14: Vitest + React Testing Library, jsdom environment —
+      # component-level tests with no network calls (verified: nothing under
+      # frontend/tests/unit/ touches fetch or the API client), so this job
+      # genuinely needs no backend/services, matching stage 1's "fast"
+      # requirement.
+      - name: Run Vitest
+        run: npm run test
+
+  backend-tests:
+    name: Backend test suite (pytest, Postgres + Redis service containers) — CI/CD stage 2
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    # research.md #14's "CI-provided Postgres service container" alternative
+    # to testcontainers-python — a real Postgres is required (never SQLite)
+    # since RLS policies and Postgres-specific behavior can only be
+    # exercised against real Postgres. Role/DB names match what the
+    # `create_least_privilege_app_role_and_rls` migration and
+    # `_require_test_environment` fixture expect (backend/tests/conftest.py).
+    # Covers both T226's "unit tests" and T227's "integration and contract
+    # tests" — tests/unit/*.py's flat files are logically dependency-free,
+    # but conftest.py's autouse fixtures (_clean_db, _clean_queues) issue a
+    # real Postgres TRUNCATE and real Redis FLUSHDB before every single
+    # test regardless of location, so no backend test in this suite can
+    # actually run without live Postgres+Redis — there is no separate,
+    # genuinely-serviceless backend unit-test job to split out without
+    # changing that suite-wide fixture design, which is out of this
+    # DevOps-only phase's scope.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: testpilot
+          POSTGRES_PASSWORD: testpilot
+          POSTGRES_DB: testpilot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U testpilot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      ENVIRONMENT: test
+      # testpilot_app (the runtime role) does not exist until the first
+      # migration creates it — `MIGRATIONS_DATABASE_URL` connects as the
+      # Postgres service container's own superuser (POSTGRES_USER) to do
+      # that; the app-role DATABASE_URL is only usable afterward.
+      DATABASE_URL: postgresql+asyncpg://testpilot_app:testpilot_app_dev_only_password@localhost:5432/testpilot_test
+      MIGRATIONS_DATABASE_URL: postgresql+asyncpg://testpilot:testpilot@localhost:5432/testpilot_test
+      REDIS_URL: redis://localhost:6379/1
+      JWT_SIGNING_KEY: ci-only-signing-key-not-for-production-use-32-chars
+      AI_PROVIDER: fake
+      CORS_ALLOWED_ORIGINS: '["http://localhost:3200"]'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      # The product's own execution engine (execution/playwright_engine.py)
+      # drives a real Chromium instance, exercised directly by several
+      # integration tests — not mocked, per the constitution's Integration
+      # Testing principle.
+      - name: Install Playwright Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Apply database migrations
+        run: uv run alembic upgrade head
+
+      # test_artifact_storage.py / test_artifact_retention.py deliberately
+      # exercise the real S3-compatible MinIO adapter with no fake/mock
+      # storage (see those files' own module docstrings). Phase 23 built
+      # the MinIO bucket-init step (infra/docker/minio-init.sh) these tests
+      # need, but GitHub Actions' native `services:` containers use the
+      # image's own default ENTRYPOINT/CMD with no way to override it —
+      # `minio/minio`'s default CMD (`minio`, no args) does not start the
+      # server (needs `server /data --console-address ":9001"`), so it
+      # cannot be added here as a plain services: entry the way postgres/
+      # redis are below. Excluded rather than left to fail on
+      # infrastructure `services:` genuinely cannot provide.
+      - name: Run backend test suite with coverage
+        run: >-
+          uv run pytest
+          --ignore=tests/integration/test_artifact_storage.py
+          --ignore=tests/integration/test_artifact_retention.py
+          --cov=src/testpilot --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-report
+          path: backend/coverage.xml
+
+  frontend-lint:
+    name: Frontend lint (includes the eslint-plugin-jsx-a11y accessibility gate)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # NFR-013/NFR-014: .eslintrc.json extends plugin:jsx-a11y/recommended
+      # (31 rules at "error" severity) — a real a11y violation fails this
+      # step's exit code the same as any other lint error, no separate
+      # tool or step required.
+      - name: Run ESLint
+        run: npm run lint
+
+  # T228 / research.md #15 stage 3: build always (validates both Dockerfiles
+  # on every push and PR — genuine "Docker image validation", not just on
+  # merge), push only on merge to main. `needs:` gates pushing a
+  # "deployable" image on every other verification job actually passing
+  # first — a broken/vulnerable main branch never produces one.
+  docker-images:
+    name: Build and push versioned Docker images (api, worker, frontend)
+    runs-on: ubuntu-latest
+    needs:
+      - backend-lint
+      - backend-typecheck
+      - backend-tests
+      - backend-dependency-audit
+      - frontend-lint
+      - frontend-typecheck
+      - frontend-unit-tests
+      - frontend-dependency-audit
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # GHCR requires a lowercase image path; github.repository preserves
+      # whatever case the repo's owner/name actually use.
+      - name: Compute lowercase image name prefix
+        id: image
+        run: echo "prefix=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      # Skipped on pull_request builds (push: false below never needs
+      # credentials) — also protects a forked-repo PR, which only gets a
+      # read-only GITHUB_TOKEN with no packages:write, from a doomed login
+      # attempt.
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # api and worker are the SAME image (plan.md: "backend.Dockerfile
+      # builds one image used for both api and worker, different CMD/
+      # entrypoint arg selects the role") — built once here, pushed under
+      # both tag sets, rather than wastefully building the identical
+      # Dockerfile twice under two separate steps.
+      - name: Build (and push on main) backend image — api + worker tags
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/backend.Dockerfile
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ steps.image.outputs.prefix }}-api:sha-${{ github.sha }}
+            ${{ steps.image.outputs.prefix }}-api:latest
+            ${{ steps.image.outputs.prefix }}-worker:sha-${{ github.sha }}
+            ${{ steps.image.outputs.prefix }}-worker:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build (and push on main) frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: infra/docker/frontend.Dockerfile
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ steps.image.outputs.prefix }}-frontend:sha-${{ github.sha }}
+            ${{ steps.image.outputs.prefix }}-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

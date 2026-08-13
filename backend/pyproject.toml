@@ -1,0 +1,145 @@
+[project]
+name = "testpilot"
+version = "0.1.0"
+description = "TestPilot AI backend: API, worker, and CLI"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "gunicorn>=23.0.0",
+    "sqlmodel>=0.0.22",
+    "sqlalchemy[asyncio]>=2.0.35",
+    "asyncpg>=0.30.0",
+    "alembic>=1.13.3",
+    "pydantic-settings>=2.6.0",
+    "email-validator>=2.2.0",
+    "passlib[argon2]>=1.7.4",
+    "argon2-cffi>=23.1.0",
+    "pyjwt>=2.9.0",
+    "rq>=2.0.0",
+    "redis>=5.1.0",
+    "playwright>=1.48.0",
+    "anthropic>=0.39.0",
+    "boto3>=1.35.0",
+    "slowapi>=0.1.9",
+    "httpx>=0.27.2",
+    "typer>=0.13.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
+    "sentry-sdk[fastapi]>=2.17.0",
+    "python-multipart>=0.0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.7.1",
+    "mypy>=1.13.0",
+    "testcontainers[postgres,redis]>=4.8.2",
+    "python-dotenv>=1.0.1",
+    "pip-audit>=2.7.3",
+]
+
+[project.scripts]
+testpilot-cli = "testpilot.cli.main:app"
+testpilot-worker = "testpilot.worker.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/testpilot"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# conftest.py must load .env.test before importing any testpilot module, so
+# get_settings() (module-level @lru_cache) builds its Settings from the test
+# config rather than whatever .env a developer's shell has loaded — that
+# ordering requirement is structural, not a style violation E402 should flag.
+"tests/conftest.py" = ["E402"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection relies on calling Depends()/Cookie()/Header()/
+# Query() in argument defaults — that is the mechanism, not a mutable-default
+# bug B008 otherwise correctly flags. This is ruff's documented mitigation for
+# FastAPI projects rather than disabling B008 project-wide.
+# typer.Option()/typer.Argument() are the same pattern for the Typer-based
+# CLI libraries (cli/*.py) — B008 already tolerates it for primitive-typed
+# params (int/bool/str) but not Enum-typed ones (e.g. `status: ProjectStatus
+# | None = typer.Option(None, ...)`), so it's listed explicitly rather than
+# leaving that inconsistency for every future CLI module to rediscover.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Cookie",
+    "fastapi.Header",
+    "fastapi.Query",
+    "typer.Option",
+    "typer.Argument",
+]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+strict = true
+ignore_missing_imports = true
+
+# SQLModel classes are typed via the Pydantic mypy plugin (SQLModel ships no
+# mypy plugin of its own), so a class-level attribute comparison like
+# `User.email == email` resolves to Python's plain `bool` instead of a
+# SQLAlchemy `ColumnElement[bool]` — a well-known, currently-unresolved
+# SQLModel+mypy limitation, not a defect in the code that triggers it. It
+# recurs in every service module that builds SQLAlchemy `select(...).where(...)`
+# queries, so it is scoped here once rather than suppressed with a
+# `# type: ignore` on every affected line. Everything else in these modules
+# (return types, business logic, non-query code) still gets full strict
+# checking — only the specific error codes this limitation produces are
+# disabled. `no-any-return` is the same root cause manifesting on the
+# *read* side: `result.scalar_one_or_none()` loses its type parameter for
+# the same reason the `where()` comparisons do, so a function returning a
+# row fetched this way is flagged as "returning Any" even though the value
+# is genuinely a properly-typed model instance. `call-overload` is the same
+# root cause hitting `select(SomeModel.some_column)` (a single-column
+# select): the column attribute resolves to its plain Python type instead of
+# an ORM-typed clause, so none of `select`'s overloads match. `execution.runner`
+# and `worker.jobs.*` are listed alongside the `*.service` glob because
+# tasks.md splits worker-invoked orchestration into its own files (runner.py,
+# purge_artifacts.py) rather than keeping it inside service.py the way
+# ai_generation does — they hit the exact same SQLModel+mypy limitation and
+# warrant the same, already-justified suppression rather than a
+# `# type: ignore` on every line.
+[[tool.mypy.overrides]]
+module = ["testpilot.*.service", "testpilot.execution.runner", "testpilot.worker.jobs.*"]
+disable_error_code = ["arg-type", "union-attr", "attr-defined", "no-any-return", "call-overload"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# "." (backend root) added alongside "src" so `tests/fixtures/server.py`
+# (T133, a shared fixture-server module, not a test file itself) is
+# importable as `tests.fixtures.server` from any test file, via Python's
+# implicit namespace packages — no `__init__.py` files needed under tests/.
+pythonpath = ["src", "."]
+
+# T215 (Phase 21, Automated Testing Infrastructure): coverage source is the
+# package itself, not the tests that exercise it. No `fail_under` gate is
+# set here — the constitution's Test-First principle mandates tests exist
+# for new functionality, not a specific coverage percentage, and an
+# arbitrary threshold would be either toothless or a false blocker with no
+# grounding in a stated requirement.
+[tool.coverage.run]
+source = ["src/testpilot"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]

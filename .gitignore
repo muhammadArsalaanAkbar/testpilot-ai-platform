@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+frontend/dist/
+frontend/build/
+*.tsbuildinfo
+.eslintcache
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+!infra/docker/.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Docker
+*.pid
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Claude Code session-runtime state (not project configuration)
+.claude/scheduled_tasks.lock
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+backend/test-results/
+
+# Alembic (keep versions, ignore local sqlite if ever used for quick scripts)
+*.sqlite3

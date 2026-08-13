@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Fixture Home</title>
+</head>
+<body>
+  <h1 id="heading">Fixture Home</h1>
+
+  <button id="counter-btn" onclick="document.getElementById('counter').textContent = String(parseInt(document.getElementById('counter').textContent, 10) + 1)">Increment</button>
+  <span id="counter">0</span>
+
+  <a id="about-link" href="/about.html">About</a>
+
+  <form id="login-form" action="/success.html" method="get">
+    <input id="email-input" name="email" type="email" />
+    <input id="password-input" name="password" type="password" />
+    <button id="login-submit" type="submit">Log in</button>
+  </form>
+
+  <div id="visible-box">Visible Content</div>
+  <div id="hidden-box" style="display:none">Hidden Content</div>
+</body>
+</html>
