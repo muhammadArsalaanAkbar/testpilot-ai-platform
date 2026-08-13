@@ -21,11 +21,11 @@ name: CI
 #     stage 2 (integration/contract vs ephemeral Postgres+Redis, every push):
 #       backend-tests (already built in Phase 21/22, unchanged here beyond
 #       comment clarity).
-#     stage 3 (build + push versioned images on merge to main): docker-images.
+#     stage 3 (build + push versioned images on merge to master): docker-images.
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
 
 jobs:
@@ -304,9 +304,9 @@ jobs:
 
   # T228 / research.md #15 stage 3: build always (validates both Dockerfiles
   # on every push and PR — genuine "Docker image validation", not just on
-  # merge), push only on merge to main. `needs:` gates pushing a
+  # merge), push only on merge to master. `needs:` gates pushing a
   # "deployable" image on every other verification job actually passing
-  # first — a broken/vulnerable main branch never produces one.
+  # first — a broken/vulnerable master branch never produces one.
   docker-images:
     name: Build and push versioned Docker images (api, worker, frontend)
     runs-on: ubuntu-latest
@@ -338,7 +338,7 @@ jobs:
       # read-only GITHUB_TOKEN with no packages:write, from a doomed login
       # attempt.
       - name: Log in to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -350,12 +350,12 @@ jobs:
       # entrypoint arg selects the role") — built once here, pushed under
       # both tag sets, rather than wastefully building the identical
       # Dockerfile twice under two separate steps.
-      - name: Build (and push on main) backend image — api + worker tags
+      - name: Build (and push on master) backend image — api + worker tags
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infra/docker/backend.Dockerfile
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
           tags: |
             ${{ steps.image.outputs.prefix }}-api:sha-${{ github.sha }}
             ${{ steps.image.outputs.prefix }}-api:latest
@@ -364,12 +364,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build (and push on main) frontend image
+      - name: Build (and push on master) frontend image
         uses: docker/build-push-action@v6
         with:
           context: frontend
           file: infra/docker/frontend.Dockerfile
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
           tags: |
             ${{ steps.image.outputs.prefix }}-frontend:sha-${{ github.sha }}
             ${{ steps.image.outputs.prefix }}-frontend:latest

@@ -1,5 +1,7 @@
 # TestPilot AI
 
+[![CI](https://github.com/muhammadArsalaanAkbar/testpilot-ai-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/muhammadArsalaanAkbar/testpilot-ai-platform/actions/workflows/ci.yml)
+
 AI-powered web application testing platform: point it at a URL, get AI-generated test cases,
 run them as real browser sessions, and get AI-explained failure analysis. See
 [`specs/001-testpilot-ai-platform/spec.md`](specs/001-testpilot-ai-platform/spec.md) for the
