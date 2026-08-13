@@ -1,0 +1,51 @@
+# JSON6902 patch, same shape as overlays/production/ingress-patch.yaml
+# (see that file's own comment for why JSON6902 rather than a strategic
+# merge patch here -- Ingress's spec.rules array has no merge key).
+# Everything not explicitly touched here -- the
+# nginx.ingress.kubernetes.io/use-regex annotation, both backend path
+# rules, ingressClassName's existence -- is untouched, coming straight
+# from base/service-ingress.yaml.
+#
+# REPLACE_ME values below are placeholders, exactly like
+# base/service-ingress.yaml's own `testpilot.example.com` and
+# overlays/production/ingress-patch.yaml's own placeholders -- this
+# overlay does not claim any of these are real, configured values. See
+# infra/k8s/README.md's "Configuring the staging overlay" section for
+# what each one means and how to set it for a real cluster.
+#
+# Every value below is deliberately DIFFERENT from
+# overlays/production/ingress-patch.yaml's -- staging must never resolve
+# to the same hostname, TLS secret, or (if using cert-manager) issuer as
+# production, or the two environments stop being isolated from each
+# other in any meaningful sense.
+
+# --- Hostname: must match config-patch.yaml's CORS_ALLOWED_ORIGINS ---
+- op: replace
+  path: /spec/rules/0/host
+  value: staging.testpilot.example.com
+
+# --- Ingress controller: base defaults to nginx; swap for whatever the
+# target cluster actually runs (traefik, alb, gce, etc.) -- likely the
+# SAME controller as production if both run in one cluster, but kept as
+# its own patch value here in case staging runs in a separate cluster. ---
+- op: replace
+  path: /spec/ingressClassName
+  value: nginx
+
+# --- TLS: cert-manager-ready shape, same mechanism as production's own
+# ingress-patch.yaml (see that file's comment for the full
+# cert-manager-vs-pre-existing-Secret explanation) -- a DIFFERENT
+# Secret name (`testpilot-staging-tls`, not `testpilot-tls`) so the two
+# environments' certificates are never confused, even if ever deployed
+# into the same cluster. No certificate or private key is ever committed
+# to this repo (SEC-004's same "never commit a real secret" rule extends
+# to TLS material) for staging either.
+- op: add
+  path: /spec/tls
+  value:
+    - hosts:
+        - staging.testpilot.example.com
+      secretName: testpilot-staging-tls
+- op: add
+  path: /metadata/annotations/cert-manager.io~1cluster-issuer
+  value: REPLACE_ME_CLUSTER_ISSUER_NAME

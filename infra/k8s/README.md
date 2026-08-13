@@ -309,6 +309,113 @@ rm infra/k8s/overlays/production/secrets.env   # never leave this behind
 - **`worker`'s liveness probe** — unchanged from `base/`'s own documented gap above (a bare TCP
   check, not a real Redis-reachability check).
 
+## The staging overlay (`overlays/staging/`)
+
+Structurally identical to `overlays/production/` above — same `base/`, same kind of patches
+(`config-patch.yaml`, `ingress-patch.yaml`), same `secretGenerator`-or-`ExternalSecret` choice —
+just with staging's own values instead of production's. `overlays/production/` is **completely
+unaffected** by this overlay's existence: nothing under it was edited to add staging.
+
+| File | Contents |
+|---|---|
+| `overlays/staging/kustomization.yaml` | `resources: [../../base, namespace.yaml]`, `namespace: testpilot-staging`, the `images:` digest-pin transformer, the two `patches:`, and the `secretGenerator`. |
+| `overlays/staging/namespace.yaml` | A `Namespace` resource named `testpilot-staging` — the actual isolation boundary from `overlays/production`'s `testpilot-production` (see below). |
+| `overlays/staging/config-patch.yaml` | Overrides `testpilot-config`'s `ENVIRONMENT` (to `"staging"` — a real, explicitly-supported `Settings.environment` value, not `"production"`) and `CORS_ALLOWED_ORIGINS`. |
+| `overlays/staging/ingress-patch.yaml` | Same JSON6902 shape as production's — different host, different TLS Secret name. |
+| `overlays/staging/secrets.env.example` | Committed template, same 10 keys as production's — staging's own values, never copied from production's. |
+| `overlays/staging/external-secret.yaml.example` | Same ESO alternative as production's (see "External Secrets Operator (alternative)" above) — staging's own remote-secret-path prefix (`testpilot/staging/...`). |
+
+### How staging differs from production
+
+Every one of these is a deliberate, distinct value — not an oversight if you notice they don't
+match `overlays/production/`'s:
+
+| | Production | Staging |
+|---|---|---|
+| Namespace | `testpilot-production` | `testpilot-staging` |
+| Hostname | `testpilot.example.com` | `staging.testpilot.example.com` |
+| `CORS_ALLOWED_ORIGINS` | matches production host | matches staging host |
+| `ENVIRONMENT` (ConfigMap) | `"production"` (`base/config.yaml`'s own default, unpatched) | `"staging"` (patched) |
+| TLS Secret name | `testpilot-tls` | `testpilot-staging-tls` |
+| Image digest | last **independently re-verified** commit (pulled from GHCR, exercised with a real `PlaywrightEngine.load_page()` call) | last commit whose `docker-images` CI job was confirmed green (not separately re-pulled/tested by hand) — staging is meant to track whatever you're currently testing |
+| `secrets.env`/`ExternalSecret` remote paths | `testpilot/production/...` | `testpilot/staging/...` |
+
+**What's identical**: the application architecture — same `base/` Deployments, Services, and
+Ingress path routing; same replica counts, resource requests/limits, and liveness/readiness
+probes (verified: diffed the rendered output of `base/` directly against staging's, byte-for-byte
+identical on every probe/resource/replica field — nothing was silently changed); same image
+*names* (`testpilot-api`/`-worker`/`-frontend` remapped to the same GHCR repository, just a
+different digest); same secrets mechanism choice (Option A `secretGenerator` by default, Option B
+`ExternalSecret` available the same opt-in way).
+
+### Configuring the staging overlay
+
+Same six steps as "Configuring the production overlay" above, applied to `overlays/staging/`'s
+own files instead:
+
+1. **Domain**: replace `staging.testpilot.example.com` in **both**
+   `overlays/staging/ingress-patch.yaml`'s host/TLS fields **and**
+   `overlays/staging/config-patch.yaml`'s `CORS_ALLOWED_ORIGINS` — keep them in sync with each
+   other, and distinct from whatever `overlays/production/` uses.
+2. **Ingress controller**: `overlays/staging/ingress-patch.yaml`'s `ingressClassName: nginx` —
+   same swap-if-needed note as production's.
+3. **TLS**: same two shapes (cert-manager or a pre-existing Secret) as production — but staging's
+   own `testpilot-staging-tls` Secret name and (if using cert-manager) potentially a different,
+   lower-trust `ClusterIssuer` (e.g. a staging CA / Let's Encrypt staging environment, rather than
+   production's real-cert issuer) — that choice is yours; this overlay only sets the placeholder.
+4. **Public object storage endpoint** — same presigned-URL requirement as production (see
+   `overlays/staging/secrets.env.example`'s own comment): staging needs its **own** bucket/
+   endpoint, not production's — reusing production's here would mean staging traffic can read/
+   write real production artifacts.
+5. **Secrets**: `cp overlays/staging/secrets.env.example overlays/staging/secrets.env`, fill in
+   **staging's own** values (gitignored, same `infra/k8s/overlays/*/secrets.env` pattern covers
+   this directory too — see `.gitignore`). Or use the ESO alternative
+   (`overlays/staging/external-secret.yaml.example`) the same opt-in way documented above for
+   production. **Never reuse a production credential for staging** — see the isolation note below.
+6. **Image tag for a specific commit**: same `docker buildx imagetools inspect` /
+   `kustomize edit set image` commands as production's step 6, run from `infra/k8s/overlays/staging/`.
+
+### Deploying and verifying
+
+```sh
+# Render only (no cluster needed):
+kubectl kustomize infra/k8s/overlays/staging/
+
+# Apply to a real cluster (requires secrets.env / an external-secrets
+# mechanism already set up per step 5 above):
+kubectl apply -k infra/k8s/overlays/staging/
+
+# Verify the rollout:
+kubectl -n testpilot-staging get pods -w
+kubectl -n testpilot-staging rollout status deployment/testpilot-api
+kubectl -n testpilot-staging rollout status deployment/testpilot-worker
+kubectl -n testpilot-staging rollout status deployment/testpilot-frontend
+kubectl -n testpilot-staging get ingress testpilot-ingress
+curl https://staging.testpilot.example.com/api/v1/readyz   # {"status":"ok","checks":{"database":"ok","redis":"ok"}}
+```
+
+### Validating locally (no cluster required)
+
+```sh
+kubectl kustomize infra/k8s/overlays/staging/
+
+cp infra/k8s/overlays/staging/secrets.env.example infra/k8s/overlays/staging/secrets.env
+kubectl kustomize infra/k8s/overlays/staging/ | docker run --rm -i ghcr.io/yannh/kubeconform:latest -summary -strict
+rm infra/k8s/overlays/staging/secrets.env   # never leave this behind
+```
+
+### Resource isolation from production
+
+Verified directly (not just asserted) when this overlay was created: rendering both overlays and
+diffing them confirms every one of the following differs between `overlays/production/` and
+`overlays/staging/` — namespace, Ingress hostname, `CORS_ALLOWED_ORIGINS`, TLS Secret name, and
+image digest — while every Kubernetes object name (`testpilot-config`, `testpilot-secrets`,
+`testpilot-api`, etc.) stays the *same* name in *both*, which is exactly what makes namespace the
+real isolation boundary: two same-named objects in two different namespaces are two entirely
+separate Kubernetes objects, never the same one. The one thing this repo cannot verify for you:
+that the *values* you put in `overlays/staging/secrets.env` are genuinely staging's own
+credentials and not copy-pasted from production's — no namespace boundary protects against that.
+
 ## Future: HPA/KEDA queue-depth autoscaling (T233 — not implemented this phase)
 
 plan.md's Kubernetes-Readiness section documents, but explicitly defers, a horizontal pod

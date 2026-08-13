@@ -1,0 +1,12 @@
+# New overlay-owned resource, same pattern as
+# overlays/production/namespace.yaml -- base/ deliberately declares no
+# namespace of its own (see infra/k8s/README.md). Distinct name
+# (testpilot-staging, not testpilot-production) is what actually prevents
+# staging and production from ever sharing a Service/ConfigMap/Secret/
+# Deployment object, since all of those are namespace-scoped in
+# Kubernetes -- this one field is the real isolation boundary between the
+# two overlays.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: testpilot-staging

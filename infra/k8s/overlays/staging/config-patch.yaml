@@ -1,0 +1,25 @@
+# Strategic-merge patch: overrides only the two ConfigMap keys that
+# differ from base/config.yaml's own defaults for a staging environment.
+# Same pattern as overlays/production/config-patch.yaml -- everything
+# else in the ConfigMap (AI_PROVIDER, OBJECT_STORAGE_BUCKET, etc.) is
+# left exactly as base/config.yaml defines it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testpilot-config
+data:
+  # backend/src/testpilot/core/config.py's Settings.environment is a
+  # Literal["local", "test", "staging", "production"] -- "staging" is a
+  # real, explicitly supported value, not invented for this overlay.
+  # base/config.yaml's own default ("production") is correct for the
+  # production overlay only; staging must override it so this is not
+  # silently misreported (e.g. to Sentry, if SENTRY_DSN is ever
+  # configured for this environment) as production traffic.
+  ENVIRONMENT: "staging"
+  # REPLACE_ME: must be the same host as ingress-patch.yaml's
+  # `/spec/rules/0/host` value, wrapped as a JSON array string (this is a
+  # literal env var value read by pydantic-settings as a list, not YAML).
+  # Deliberately a DIFFERENT host than overlays/production/config-patch.yaml's
+  # -- staging and production must never share one CORS origin, or a
+  # credential/session issued by one could be replayed against the other.
+  CORS_ALLOWED_ORIGINS: '["https://staging.testpilot.example.com"]'

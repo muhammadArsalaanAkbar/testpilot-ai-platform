@@ -1,0 +1,79 @@
+# Environment-specific overlay referencing infra/k8s/base/ unmodified --
+# every override below is a Kustomize transformer/patch/generator applied
+# at render time, never an edit to any file under base/. Structurally
+# identical to overlays/production/kustomization.yaml (same base/, same
+# kind of patches) -- only the values differ. See infra/k8s/README.md's
+# "Configuring the staging overlay" section for the full operator setup
+# guide (what REPLACE_ME values must be supplied, and how) and "How
+# staging differs from production" for a direct comparison of the two.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+# Distinct from overlays/production's `testpilot-production` -- this is
+# the actual isolation boundary between the two overlays (see
+# namespace.yaml's own comment). Stamped onto every resource above,
+# including base/'s (which deliberately declares none of its own).
+namespace: testpilot-staging
+
+# Remaps base/deployments.yaml's plain, unqualified image names to the
+# real GHCR images ci.yml's `docker-images` job actually publishes,
+# pinned by digest (not `:latest`). The digests below are from commit
+# `f2d8950` -- the most recent commit whose `docker-images` CI job was
+# confirmed green (GitHub Actions API, 2026-08-14) at the time this
+# overlay was created. Unlike overlays/production/kustomization.yaml's
+# pinned digest (independently re-pulled from GHCR and exercised with a
+# real PlaywrightEngine.load_page() call -- see docs/RELEASE.md's
+# Verification record), this staging digest is CI-confirmed only, not
+# separately re-verified by hand -- an intentional, honest distinction:
+# staging is meant to track whatever commit you're currently testing,
+# not a manually re-verified release the way production's pin is.
+# REPLACE with the digest of whatever commit you are actually deploying
+# to staging -- see infra/k8s/README.md for the exact
+# `docker buildx imagetools inspect` command to fetch a given commit's
+# current digest.
+images:
+  - name: testpilot-api
+    newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-api
+    digest: sha256:944946fe8f9023e3ee626cdf9a3860991cee75770ddb22f208fbbd107a242146
+  - name: testpilot-worker
+    newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-worker
+    digest: sha256:944946fe8f9023e3ee626cdf9a3860991cee75770ddb22f208fbbd107a242146
+  - name: testpilot-frontend
+    newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-frontend
+    digest: sha256:058b6d6801faa70342ffce10dcd3f1c2d9caf300bbd89435c0018082416b2894
+
+patches:
+  - path: config-patch.yaml
+  - path: ingress-patch.yaml
+    target:
+      group: networking.k8s.io
+      version: v1
+      kind: Ingress
+      name: testpilot-ingress
+
+# Replaces base/config.yaml's placeholder Secret entirely with real,
+# operator-supplied STAGING values from secrets.env (gitignored -- copy
+# secrets.env.example to secrets.env first and fill it in; see that
+# file's own header comment, and infra/k8s/README.md, for the full
+# explanation including the External-Secrets-Operator alternative to
+# this generator). `behavior: replace` targets the existing
+# `testpilot-secrets` Secret from base/config.yaml by name rather than
+# creating a second, differently-named one -- Deployments'
+# `secretRef: name: testpilot-secrets` in base/deployments.yaml needs no
+# change either way. This Secret lives in the testpilot-staging
+# namespace (this file's own `namespace:` above), so it can never be the
+# same Kubernetes object as overlays/production's same-named Secret in
+# testpilot-production -- but the secrets.env VALUES supplied here must
+# still be staging's own, not copy-pasted from production's, or the
+# namespace boundary alone won't prevent staging from reading/writing
+# real production data.
+secretGenerator:
+  - name: testpilot-secrets
+    behavior: replace
+    envs:
+      - secrets.env
