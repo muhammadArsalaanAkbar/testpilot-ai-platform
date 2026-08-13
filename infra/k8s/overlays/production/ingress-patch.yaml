@@ -1,0 +1,47 @@
+# JSON6902 patch (precise single-field/array-index edits -- Ingress's
+# spec.rules array has no merge key Kubernetes' strategic-merge-patch can
+# key off of, so an ordinary strategic-merge patch would silently replace
+# the whole rules list rather than edit one field of it; JSON6902 avoids
+# that ambiguity). Everything not explicitly touched here -- the
+# nginx.ingress.kubernetes.io/use-regex annotation, both backend path
+# rules, ingressClassName's existence -- is untouched, coming straight
+# from base/service-ingress.yaml.
+#
+# REPLACE_ME values below (all three) are placeholders, exactly like
+# base/service-ingress.yaml's own `testpilot.example.com` -- this overlay
+# does not claim any of these are real, configured values. See
+# infra/k8s/README.md's "Configuring the production overlay" section for
+# what each one means and how to set it for a real cluster.
+
+# --- Hostname: must match config-patch.yaml's CORS_ALLOWED_ORIGINS ---
+- op: replace
+  path: /spec/rules/0/host
+  value: testpilot.example.com
+
+# --- Ingress controller: base defaults to nginx; swap for whatever the
+# target cluster actually runs (traefik, alb, gce, etc.) ---
+- op: replace
+  path: /spec/ingressClassName
+  value: nginx
+
+# --- TLS: cert-manager-ready shape. If cert-manager is installed in the
+# target cluster with a ClusterIssuer already configured, the annotation
+# below (REPLACE_ME'd with that issuer's real name) makes cert-manager
+# watch this Ingress and automatically create/renew a certificate into the
+# `testpilot-tls` Secret named here. If NOT using cert-manager, delete
+# the cert-manager.io/cluster-issuer annotation op below and instead
+# create the `testpilot-tls` Secret yourself (`kubectl create secret tls
+# testpilot-tls --cert=... --key=... -n testpilot-production`, or your own
+# TLS-terminating load balancer / ingress controller's own mechanism) --
+# either way, NO certificate or private key is ever committed to this
+# repo (SEC-004's same "never commit a real secret" rule extends to TLS
+# material).
+- op: add
+  path: /spec/tls
+  value:
+    - hosts:
+        - testpilot.example.com
+      secretName: testpilot-tls
+- op: add
+  path: /metadata/annotations/cert-manager.io~1cluster-issuer
+  value: REPLACE_ME_CLUSTER_ISSUER_NAME

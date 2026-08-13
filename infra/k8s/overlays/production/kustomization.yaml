@@ -1,0 +1,63 @@
+# Environment-specific overlay referencing infra/k8s/base/ unmodified --
+# every override below is a Kustomize transformer/patch/generator applied
+# at render time, never an edit to any file under base/. See
+# infra/k8s/README.md's "Configuring the production overlay" section for
+# the full operator setup guide (what REPLACE_ME values must be supplied,
+# and how).
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+# Stamps this namespace onto every resource above, including base/'s
+# (which deliberately declares none of its own).
+namespace: testpilot-production
+
+# Remaps base/deployments.yaml's plain, unqualified image names to the
+# real GHCR images Phase 24's ci.yml `docker-images` job actually
+# publishes, pinned by digest (not `:latest`) for a real deployment's
+# immutability/reproducibility. The digests below are the last
+# independently-verified images as of 2026-08-14 (commit `ae9bfaf`,
+# docs/RELEASE.md's release-checklist verification -- pulled from GHCR and
+# confirmed with a real PlaywrightEngine.load_page() call against the
+# actual worker image, not just a passing CI job). REPLACE with the digest
+# of whatever commit you are actually deploying for every real release --
+# see infra/k8s/README.md for the exact `docker buildx imagetools inspect`
+# command to fetch a given commit's current digest.
+images:
+  - name: testpilot-api
+    newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-api
+    digest: sha256:70aa966f30502104d5919ff213364620ab4042b4929af869096b51de5f854b78
+  - name: testpilot-worker
+    newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-worker
+    digest: sha256:70aa966f30502104d5919ff213364620ab4042b4929af869096b51de5f854b78
+  - name: testpilot-frontend
+    newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-frontend
+    digest: sha256:1b2e8d4964d18a9e8052ef200b73c84edaa9dc3d1ec4f8b761a1a756875e3a86
+
+patches:
+  - path: config-patch.yaml
+  - path: ingress-patch.yaml
+    target:
+      group: networking.k8s.io
+      version: v1
+      kind: Ingress
+      name: testpilot-ingress
+
+# Replaces base/config.yaml's placeholder Secret entirely with real,
+# operator-supplied values from secrets.env (gitignored -- copy
+# secrets.env.example to secrets.env first and fill it in; see that file's
+# own header comment, and infra/k8s/README.md, for the full explanation
+# including the External-Secrets-Operator alternative to this generator).
+# `behavior: replace` targets the existing `testpilot-secrets` Secret from
+# base/config.yaml by name rather than creating a second, differently-named
+# one -- Deployments' `secretRef: name: testpilot-secrets` in
+# base/deployments.yaml needs no change either way.
+secretGenerator:
+  - name: testpilot-secrets
+    behavior: replace
+    envs:
+      - secrets.env

@@ -1,0 +1,9 @@
+# New overlay-owned resource (base/ deliberately declares no namespace of
+# its own -- see infra/k8s/README.md). `namespace:` below in
+# kustomization.yaml stamps this same namespace onto every base resource
+# too, so this Namespace and the Deployments/Services/Ingress/ConfigMap/
+# Secret it contains are applied together as one unit.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: testpilot-production

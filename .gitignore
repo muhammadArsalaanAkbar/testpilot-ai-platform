@@ -26,6 +26,10 @@ frontend/build/
 !.env.example
 !infra/docker/.env.example
 
+# Kubernetes overlay secrets (operator-provided, real values -- never commit)
+infra/k8s/overlays/*/secrets.env
+!infra/k8s/overlays/*/secrets.env.example
+
 # Logs
 *.log
 npm-debug.log*

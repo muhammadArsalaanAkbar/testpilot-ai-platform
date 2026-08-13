@@ -95,37 +95,38 @@ curl http://localhost:8000/api/v1/healthz   # {"status":"ok"}
 curl http://localhost:8000/api/v1/readyz    # {"status":"ok","checks":{"database":"ok","redis":"ok"}}
 ```
 
-### 2b. Kubernetes (base manifests only — `infra/k8s/`, Phase 25)
+### 2b. Kubernetes (`infra/k8s/base/` + `infra/k8s/overlays/production/`)
 
-`infra/k8s/base/` is **not** a ready-to-apply production deployment — it is the documented
-manifest *shape* (plan.md's Kubernetes-Readiness section), validated structurally (see
-`infra/k8s/README.md` for exactly how) but never applied against a real cluster with real
-values. Before applying anywhere real:
+`infra/k8s/base/` is still the cluster-agnostic manifest *shape* (plan.md's Kubernetes-Readiness
+section) — no real values, never meant to be applied as-is. `infra/k8s/overlays/production/` is a
+real Kustomize overlay on top of it (see `infra/k8s/README.md`'s "The production overlay" section
+for the full file-by-file breakdown) — it is **structurally deployable** (renders cleanly,
+validates against `kubeconform -strict`, all secret values are placeholders) but still requires an
+operator to supply real values for the domain, TLS, object storage endpoint, and secrets before
+`kubectl apply -k` would produce a working deployment. Steps:
 
-1. Build/push real images (CI stage 3 already does this on merge to `main` —
-   `ghcr.io/<owner>/<repo>-{api,worker,frontend}:sha-<commit>`).
-2. Create an environment-specific overlay under `infra/k8s/overlays/<env>/` (not built yet —
-   Future) that:
-   - Uses Kustomize's `images:` transformer to remap `deployments.yaml`'s placeholder image
-     names (`testpilot-api:latest` etc.) to the real pushed tags.
-   - Replaces `config.yaml`'s `Secret` with a real secrets-management mechanism (External
-     Secrets Operator, Sealed Secrets, or a CI/CD-injected `kubectl create secret` — never a
-     committed value, per SEC-004).
-   - Sets `service-ingress.yaml`'s `testpilot.example.com` placeholder host and a real
-     `ingressClassName` matching the target cluster's ingress controller.
-3. `kubectl apply -k infra/k8s/overlays/<env>/`
-4. Point `frontend.Dockerfile`'s `NEXT_PUBLIC_API_BASE_URL` build ARG at the real API's public
+1. Build/push real images — CI stage 3 already does this on every push to `master`
+   (`ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-{api,worker,frontend}:sha-<commit>`).
+2. Pin the overlay's `kustomization.yaml` `images:` block to the digest of the commit you're
+   deploying (`infra/k8s/README.md`'s "Configuring the production overlay" step 6 has the exact
+   `docker buildx imagetools inspect` / `kustomize edit set image` commands).
+3. Set the real domain (`infra/k8s/README.md` step 1), ingress controller (step 2), TLS (step 3),
+   public object storage endpoint (step 4 — see the known gap below), and secrets (step 5).
+4. `kubectl apply -k infra/k8s/overlays/production/`
+5. Point `frontend.Dockerfile`'s `NEXT_PUBLIC_API_BASE_URL` build ARG at the real API's public
    URL when building the frontend image for this environment (it is baked in at image-build
-   time, not read at container-start time — see the Dockerfile's own comment).
+   time, not read at container-start time — see the Dockerfile's own comment; this overlay does
+   not and cannot override it after the fact).
 
 **Known gap, honestly documented, not silently glossed over**: `storage/s3.py`'s presigned URLs
 are generated using the same internal `endpoint_url` the API/worker use to reach the object
 store — if that's a cluster-internal hostname, a browser on the public internet cannot resolve
 it. No project requirement currently defines a distinct "public" storage endpoint setting to
 solve this (see `quickstart-results.md`'s Section 1/2 notes, where this was first found against
-docker-compose) — a real deployment needs a publicly-reachable S3/MinIO endpoint (or a
-CloudFront/reverse-proxy fronting it) before screenshot/artifact viewing works outside the
-cluster's own network.
+docker-compose). The production overlay's `secrets.env.example` documents this exact requirement
+at the `OBJECT_STORAGE_ENDPOINT_URL` key rather than inventing a default — a real deployment needs
+a publicly-reachable S3/MinIO endpoint (or a CloudFront/reverse-proxy fronting it) before
+screenshot/artifact viewing works outside the cluster's own network.
 
 ## 3. Rollback
 
@@ -173,7 +174,10 @@ still real, documented gaps):
 
 - **Worker HPA/KEDA autoscaling** — documented shape only in `infra/k8s/README.md`; needs real
   production load data to tune thresholds meaningfully.
-- **`infra/k8s/overlays/`** — no environment-specific overlay exists yet (see §2b above).
+- **`infra/k8s/overlays/production/`** now exists (see §2b above and `infra/k8s/README.md`), but
+  still requires operator-supplied values (domain, TLS, public object storage endpoint, secrets)
+  before it is a genuinely working deployment — structurally deployable, not "ready with one
+  command" for any specific real cluster.
 - **Worker's own liveness probe** is a bare TCP check against its metrics port, not a genuine
   Redis-reachability check (no dedicated worker health-check command exists — see
   `infra/k8s/README.md`'s own probe documentation for the honest limitation).

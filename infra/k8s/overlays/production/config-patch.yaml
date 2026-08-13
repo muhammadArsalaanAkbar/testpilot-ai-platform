@@ -1,0 +1,16 @@
+# Strategic-merge patch: overrides only the one ConfigMap key that must
+# track the real hostname (see ingress-patch.yaml's own comment -- these
+# two MUST stay in sync, the same convention base/service-ingress.yaml's
+# comment already establishes for this exact value). Every other key
+# (ENVIRONMENT, AI_PROVIDER, OBJECT_STORAGE_BUCKET, etc.) is left exactly
+# as base/config.yaml defines it -- this file is not a full copy of that
+# ConfigMap, only the delta.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testpilot-config
+data:
+  # REPLACE_ME: must be the same host as ingress-patch.yaml's
+  # `/spec/rules/0/host` value, wrapped as a JSON array string (this is a
+  # literal env var value read by pydantic-settings as a list, not YAML).
+  CORS_ALLOWED_ORIGINS: '["https://testpilot.example.com"]'
