@@ -52,9 +52,14 @@ jobs:
       # replaces pip for installs) — exporting the lockfile to a plain
       # requirements.txt and auditing *that* sidesteps the missing-pip
       # problem entirely and is what uv's own docs recommend for this
-      # exact combination.
+      # exact combination. --no-emit-project excludes the local `testpilot`
+      # package itself from the export — without it, pip-audit tries to look
+      # `testpilot` up on PyPI as if it were a real published dependency and
+      # fails with "Dependency not found on PyPI", even though it isn't a
+      # vulnerability at all (found when CI's main/master branch mismatch was
+      # fixed and this job ran for the first time ever).
       - name: Export locked dependencies
-        run: uv export --format requirements.txt --extra dev --no-hashes -o requirements-audit.txt
+        run: uv export --format requirements.txt --extra dev --no-hashes --no-emit-project -o requirements-audit.txt
 
       # --strict fails the job on any known vulnerability instead of only
       # warning — a dependency CVE should block merge, the same as a
