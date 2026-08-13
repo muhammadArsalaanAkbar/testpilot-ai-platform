@@ -1,7 +1,7 @@
 # Quickstart Validation Results
 
 **Feature**: `001-testpilot-ai-platform` | **Validated**: 2026-08-12 (Sections 1-2), 2026-08-13
-(Sections 3-14, Phase 26 Final Integration/QA)
+(Sections 3-14, Phase 26 Final Integration/QA), 2026-08-13–14 (CI/CD pipeline, post-Phase 26)
 
 Results are recorded per quickstart.md section as each is validated against a real running
 stack (not simulated/mocked). Sections not yet exercised are omitted rather than marked
@@ -197,6 +197,103 @@ Section 1 or 2) would be affected by this in the current dockerized setup. No pr
 requirement (spec.md, plan.md, research.md, contracts/) currently defines a distinct "public"
 storage endpoint setting to resolve this, so it is out of this phase's scope to invent one;
 flagged here for visibility rather than silently left undiscovered.
+
+## CI/CD pipeline validation, post-Phase 26
+
+Phase 24 built `.github/workflows/ci.yml`, and its own checkpoint report validated the workflow
+file (actionlint, local reproduction of each job's commands) — but the workflow had never
+actually **executed** as a real GitHub Actions run until this pass, which is what surfaced the
+four issues below. None of these are quickstart.md-numbered sections; recorded here because they
+were found and fixed through the same "run it for real, don't just inspect the file" discipline
+as the rest of this document, on the pushed repository
+(`github.com/muhammadArsalaanAkbar/testpilot-ai-platform`).
+
+### Real bug found and fixed: CI had never run at all (`main`/`master` branch mismatch)
+
+**Symptom**: A CI status badge added to `README.md` rendered "no status"/404 rather than
+pass/fail.
+
+**Root cause**: `ci.yml`'s trigger was `on: push: branches: [main]`, but the repository's actual
+(and only) branch is `master` — every push since the initial commit silently failed to match,
+so the workflow had zero runs in its history. Confirmed via the GitHub Actions API
+(`/actions/workflows`, `/actions/runs`): only GitHub's own automatic Dependabot dependency-graph
+job had ever run.
+
+**Fix**: `branches: [main]` → `branches: [master]`, plus the 3 `github.ref ==
+'refs/heads/main'` conditionals (GHCR login, both `docker/build-push-action` `push:` gates).
+
+**Verification**: pushed the fix; the workflow registered in `/actions/workflows` for the first
+time and a real run started immediately.
+
+### Real bug found and fixed: `pip-audit` false failure (auditing our own unpublished package)
+
+**Symptom**: `backend-dependency-audit` failed on the workflow's first-ever run:
+`pip_audit._cli: testpilot: Dependency not found on PyPI and could not be audited`.
+
+**Root cause**: the job's `uv export --format requirements.txt --extra dev --no-hashes` step
+included the local, unpublished `testpilot` package itself (via its `-e .` entry) in the
+exported requirements file — `pip-audit` then tried to look `testpilot` up on PyPI as if it were
+a real third-party dependency and failed. Not a real vulnerability.
+
+**Fix**: added `--no-emit-project` to the `uv export` command, excluding the local package from
+the audit input.
+
+**Verification**: reproduced locally first (`uv run pip-audit --strict -r
+requirements-audit.txt` failed identically without the flag, passed with `No known
+vulnerabilities found` after), then confirmed green on the real CI run for the fix commit.
+
+### Real bug found and fixed: 9 npm high/critical/moderate vulnerabilities (`next`, `vitest`)
+
+**Symptom**: `frontend-dependency-audit` (`npm audit --audit-level=high`) failed once CI could
+finally run it: 9 vulnerabilities (3 moderate, 5 high, 1 critical).
+
+**Root cause**: `next@15.5.22` bundled a vulnerable `postcss` (8.4.31) and `sharp` (<0.35.0), and
+no patched stable 15.x release exists (only unreleased 15.6 canaries) — the fix requires 16.x.
+Separately, `vitest@2.1.9` itself carried a **critical** CVE (GHSA-5xrq-8626-4rwp: arbitrary file
+read/execute via its UI server), fixed in >=3.2.6, dragging in the same-tree `esbuild`/`vite`/
+`vite-node`/`@vitest/mocker` moderate findings.
+
+**Fix**: `next` 15.0.3 → 16.3.0 (`react`/`react-dom` stayed at 18.3.1 — Next 16 still accepts
+React 18 as a peer, so no forced React major bump; `eslint-config-next` stayed at 15.x too, since
+it has no hard peer on `next`'s own version and bumping it would have forced an unrelated ESLint
+9 migration). `vitest` 2.1.9 → 3.2.7, which also resolved `vite` to 7.3.6 and `esbuild` to
+0.28.2. `nanoid` resolved to 3.3.18 within `postcss`'s existing `^3.3.16` range via `npm update`.
+
+**Verification**: `npm audit --audit-level=high` → `found 0 vulnerabilities`. Full regression
+before committing: frontend unit tests (30/30), `tsc --noEmit`, `eslint`, `next build`
+(Turbopack), and the full 25-test Playwright E2E suite — all against a live
+Postgres+Redis+MinIO+Mailhog stack with a real API/worker (required fixing this session's own
+local verification setup along the way: RQ's default fork-based `Worker` doesn't run on Windows,
+`os.fork` doesn't exist there, so verification used `SimpleWorker` instead — a
+verification-environment-only detail, not a production concern since workers always run in Linux
+containers). Backend regression (unrelated files, run as a release-process check): ruff, mypy,
+`alembic check`, and pytest (372/373 — the one failure reproduced as a pre-existing load-related
+flake, passing cleanly in isolation, unrelated to this change).
+
+### Real bug found and fixed: `backend-tests` had never actually passed in CI (missing MinIO)
+
+**Symptom**: `backend-tests` failed on the first real CI run, and again on a targeted
+`rerun-failed-jobs` re-run (ruling out a flake before investigating further) — 5 failures, all
+`botocore.exceptions.NoCredentialsError` or a missing-attachment assertion.
+
+**Root cause**: `backend-tests` provisions only `postgres`/`redis` GitHub Actions service
+containers — no MinIO, since (per the job's own existing comment) `minio/minio`'s default image
+entrypoint doesn't start the server and GitHub's native `services:` block has no way to override
+a container's command. Two whole files were already excluded from the test run for this exact
+reason (`test_artifact_storage.py`, `test_artifact_retention.py`), but 5 *individual* tests in
+otherwise storage-independent files — `test_issues.py` (3), `test_test_results.py` (1),
+`test_issues_from_result.py` (1) — also create a failed result, which captures a real screenshot
+through the storage adapter, and were never added to the exclusion. This is why it was never
+caught before: the branch-mismatch bug above meant this job had never executed in GitHub Actions
+at all until now.
+
+**Fix**: added `--deselect` for the exact 5 test IDs (not `--ignore` for their whole files) — the
+other 22 tests across those 3 files don't touch storage and still run in CI.
+
+**Verification**: `pytest --collect-only` confirmed exactly 5 deselected (358/363 collected); a
+full local run with the identical CI flags passed 358/358. Pushed and confirmed via the GitHub
+Actions API: 9/9 jobs green, including `docker-images` (previously blocked by `backend-tests`
+never passing) successfully building and pushing all three images to GHCR for the first time.
 
 ## Validation environment notes
 
