@@ -269,11 +269,26 @@ jobs:
       # cannot be added here as a plain services: entry the way postgres/
       # redis are below. Excluded rather than left to fail on
       # infrastructure `services:` genuinely cannot provide.
+      #
+      # A handful of individual tests in otherwise-storage-independent
+      # files hit the same MinIO gap (they create a failed result, which
+      # captures a real screenshot through the storage adapter) — deselected
+      # by exact test ID rather than --ignore-ing their whole file, since
+      # every other test in test_issues.py/test_test_results.py/
+      # test_issues_from_result.py does not touch storage and should still
+      # run here. Found 2026-08-13 when this job ran to completion in
+      # GitHub Actions for the first time (an earlier CI/CD branch-name bug
+      # meant this workflow had never actually executed before).
       - name: Run backend test suite with coverage
         run: >-
           uv run pytest
           --ignore=tests/integration/test_artifact_storage.py
           --ignore=tests/integration/test_artifact_retention.py
+          --deselect=tests/contract/test_issues.py::test_create_issue_from_a_failed_result
+          --deselect=tests/contract/test_issues.py::test_add_attachment_from_existing_storage_key
+          --deselect=tests/contract/test_issues.py::test_add_attachment_via_multipart_upload
+          --deselect=tests/contract/test_test_results.py::test_get_result_detail_for_a_failed_case_has_a_signed_screenshot_url
+          --deselect=tests/integration/test_issues_from_result.py::test_create_from_result_copies_attachments_and_survives_a_source_case_edit
           --cov=src/testpilot --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage report
