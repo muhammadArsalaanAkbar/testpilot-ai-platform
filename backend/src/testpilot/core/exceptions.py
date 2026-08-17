@@ -142,6 +142,16 @@ class NotImplementedYetError(TestPilotError):
     status_code = status.HTTP_501_NOT_IMPLEMENTED
 
 
+class AssistantUnavailableError(TestPilotError):
+    """The AI QA Assistant's provider call failed (timeout, rate limit,
+    malformed output, or bounded retries exhausted) — contracts/_conventions.md's
+    `ai_analysis_unavailable`-style pattern, applied to the synchronous chat
+    path. Never carries provider internals/secrets in `message`/`details`."""
+
+    code = "assistant_unavailable"
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+
 def _error_response(exc: TestPilotError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,

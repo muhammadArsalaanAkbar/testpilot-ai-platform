@@ -110,15 +110,22 @@ ignore_missing_imports = true
 # is genuinely a properly-typed model instance. `call-overload` is the same
 # root cause hitting `select(SomeModel.some_column)` (a single-column
 # select): the column attribute resolves to its plain Python type instead of
-# an ORM-typed clause, so none of `select`'s overloads match. `execution.runner`
-# and `worker.jobs.*` are listed alongside the `*.service` glob because
-# tasks.md splits worker-invoked orchestration into its own files (runner.py,
-# purge_artifacts.py) rather than keeping it inside service.py the way
-# ai_generation does — they hit the exact same SQLModel+mypy limitation and
-# warrant the same, already-justified suppression rather than a
-# `# type: ignore` on every line.
+# an ORM-typed clause, so none of `select`'s overloads match. `execution.runner`,
+# `worker.jobs.*`, and `assistant.context_builder` are listed alongside the
+# `*.service` glob because tasks.md splits worker-invoked orchestration into
+# its own files (runner.py, purge_artifacts.py) rather than keeping it inside
+# service.py the way ai_generation does, and context_builder.py is likewise
+# assistant/service.py's own query-building helper split into its own module
+# (assistant/context_builder.py's docstring) — they hit the exact same
+# SQLModel+mypy limitation and warrant the same, already-justified
+# suppression rather than a `# type: ignore` on every line.
 [[tool.mypy.overrides]]
-module = ["testpilot.*.service", "testpilot.execution.runner", "testpilot.worker.jobs.*"]
+module = [
+    "testpilot.*.service",
+    "testpilot.execution.runner",
+    "testpilot.worker.jobs.*",
+    "testpilot.assistant.context_builder",
+]
 disable_error_code = ["arg-type", "union-attr", "attr-defined", "no-any-return", "call-overload"]
 
 [tool.pytest.ini_options]
