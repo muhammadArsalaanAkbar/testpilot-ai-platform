@@ -23,29 +23,36 @@ namespace: testpilot-staging
 # Remaps base/deployments.yaml's plain, unqualified image names to the
 # real GHCR images ci.yml's `docker-images` job actually publishes,
 # pinned by digest (not `:latest`). The digests below are from commit
-# `f2d8950` -- the most recent commit whose `docker-images` CI job was
-# confirmed green (GitHub Actions API, 2026-08-14) at the time this
-# overlay was created. Unlike overlays/production/kustomization.yaml's
-# pinned digest (independently re-pulled from GHCR and exercised with a
-# real PlaywrightEngine.load_page() call -- see docs/RELEASE.md's
-# Verification record), this staging digest is CI-confirmed only, not
-# separately re-verified by hand -- an intentional, honest distinction:
-# staging is meant to track whatever commit you're currently testing,
-# not a manually re-verified release the way production's pin is.
-# REPLACE with the digest of whatever commit you are actually deploying
-# to staging -- see infra/k8s/README.md for the exact
-# `docker buildx imagetools inspect` command to fetch a given commit's
-# current digest.
+# `2e315f6` -- the most recent commit whose `docker-images` CI job was
+# confirmed green (GitHub Actions run 32013566384, 2026-08-17) at the
+# time this pin was last updated; its parent `f43f148` (`feat: implement
+# FR-102 citation support`) is the last commit that actually changed
+# application code -- `2e315f6` itself only repinned
+# overlays/production/kustomization.yaml, so both commits' images contain
+# the same application code, independently confirmed by pulling the api
+# image at this exact digest and importing
+# testpilot.assistant.service/context_builder directly inside it.
+# Unlike overlays/production/kustomization.yaml's pinned digest
+# (independently re-pulled from GHCR and exercised with a real
+# PlaywrightEngine.load_page() call -- see docs/RELEASE.md's Verification
+# record), this staging digest is CI-confirmed and code-content-verified
+# but not run through that full manual release checklist -- an
+# intentional, honest distinction: staging is meant to track whatever
+# commit you're currently testing, not a manually re-verified release the
+# way production's pin is. REPLACE with the digest of whatever commit you
+# are actually deploying to staging -- see infra/k8s/README.md for the
+# exact `docker buildx imagetools inspect` command to fetch a given
+# commit's current digest.
 images:
   - name: testpilot-api
     newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-api
-    digest: sha256:944946fe8f9023e3ee626cdf9a3860991cee75770ddb22f208fbbd107a242146
+    digest: sha256:8fc48cf048e1e5247bdb28230751a161ded329bfa6b563f17cb4b041355c57ae
   - name: testpilot-worker
     newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-worker
-    digest: sha256:944946fe8f9023e3ee626cdf9a3860991cee75770ddb22f208fbbd107a242146
+    digest: sha256:8fc48cf048e1e5247bdb28230751a161ded329bfa6b563f17cb4b041355c57ae
   - name: testpilot-frontend
     newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-frontend
-    digest: sha256:058b6d6801faa70342ffce10dcd3f1c2d9caf300bbd89435c0018082416b2894
+    digest: sha256:75d4839723d7c9373805fe38ca0f9ac7128044f54df36b78202f50cd5928654a
 
 patches:
   - path: config-patch.yaml
