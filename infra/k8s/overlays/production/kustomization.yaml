@@ -20,23 +20,25 @@ namespace: testpilot-production
 # real GHCR images Phase 24's ci.yml `docker-images` job actually
 # publishes, pinned by digest (not `:latest`) for a real deployment's
 # immutability/reproducibility. The digests below are the last
-# independently-verified images as of 2026-08-14 (commit `ae9bfaf`,
-# docs/RELEASE.md's release-checklist verification -- pulled from GHCR and
-# confirmed with a real PlaywrightEngine.load_page() call against the
-# actual worker image, not just a passing CI job). REPLACE with the digest
-# of whatever commit you are actually deploying for every real release --
-# see infra/k8s/README.md for the exact `docker buildx imagetools inspect`
-# command to fetch a given commit's current digest.
+# independently-verified images as of 2026-08-17 (commit `f43f148`,
+# `feat: implement FR-102 citation support` -- the AI QA Assistant chat
+# feature and its citation follow-up, on top of the prior `ae9bfaf`
+# release). Verified via GitHub Actions run 32009290207 (9/9 jobs
+# `success`, including `docker-images`) and confirmed against the real
+# registry with `docker buildx imagetools inspect` (see infra/k8s/README.md
+# for that exact command) -- not a guessed or invented digest. REPLACE with
+# the digest of whatever commit you are actually deploying for every real
+# release.
 images:
   - name: testpilot-api
     newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-api
-    digest: sha256:70aa966f30502104d5919ff213364620ab4042b4929af869096b51de5f854b78
+    digest: sha256:a0ea8f7f0bac6452a9251292795c7f4b97c507d462e0eb29f71d7d704638420e
   - name: testpilot-worker
     newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-worker
-    digest: sha256:70aa966f30502104d5919ff213364620ab4042b4929af869096b51de5f854b78
+    digest: sha256:a0ea8f7f0bac6452a9251292795c7f4b97c507d462e0eb29f71d7d704638420e
   - name: testpilot-frontend
     newName: ghcr.io/muhammadarsalaanakbar/testpilot-ai-platform-frontend
-    digest: sha256:1b2e8d4964d18a9e8052ef200b73c84edaa9dc3d1ec4f8b761a1a756875e3a86
+    digest: sha256:26763c93283c6039fb8c36237eb0f7663c0bed770d3a11387d6eb5c19b25ca72
 
 patches:
   - path: config-patch.yaml
