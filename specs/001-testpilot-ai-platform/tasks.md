@@ -508,18 +508,43 @@ correctly), create one manually, move it through its status lifecycle, filter th
 
 ---
 
-## Phase 15: AI QA Assistant, User Story 10, Priority P3, Future — Scaffold Only
+## Phase 15: AI QA Assistant, User Story 10, Priority P3, Future — Scaffold (T177-T181), later completed (T256-T264)
 
-**Goal**: Reserve the interface and data model for the conversational assistant without building
-its functionality, so it can be added later without a breaking change.
+**Goal (original, Phase 15 scaffold step)**: Reserve the interface and data model for the
+conversational assistant without building its functionality, so it can be added later without a
+breaking change.
 
 - [X] T177 [US10] [DB] Create assistant_conversations and assistant_messages models, Future schema per data-model.md, plus migration, backend/src/testpilot/assistant/models.py (Req: FR-097 to FR-103, Future Scope) - depends on T073
 - [X] T178 [US10] [AI] Implement chat on the fake LLMProvider adapter, interface already reserved per contracts/ai-provider-adapter.md, backend/src/testpilot/ai_provider/fake.py (Req: contracts/ai-provider-adapter.md) - depends on T111
 - [X] T179 [US10] [Backend] Implement a chat endpoint stub returning 501 not_implemented at MVP with the data model already in place, backend/src/testpilot/api/v1/assistant.py (Req: Future Scope) - depends on T177
 - [X] T180 [US10] [Frontend] Build the AI QA Assistant page scaffold, chat UI shown as a coming-soon state at MVP, frontend/src/app/(dashboard)/assistant/page.tsx (Req: FR-023, Future Scope) - depends on T068
-- [X] T181 [US10] [Testing] Test: the chat endpoint returns 501 without erroring the app, backend/tests/contract/test_assistant_stub.py (Req: Future Scope) - depends on T179
+- [X] T181 [US10] [Testing] Test: the chat endpoint returns 501 without erroring the app, backend/tests/contract/test_assistant_stub.py (Req: Future Scope) - depends on T179 (superseded by T261; file replaced by test_assistant_chat.py)
 
-**Checkpoint**: The Future capability is visibly present in navigation and API surface but honestly non-functional, not silently missing.
+**Checkpoint (scaffold step)**: The Future capability is visibly present in navigation and API surface but honestly non-functional, not silently missing.
+
+### Phase 15 (continued): Real implementation — FR-097–FR-101, FR-103 (post-scaffold follow-up)
+
+**Goal**: Turn the Phase 15 scaffold into a functional, project-aware QA copilot: a bounded,
+Organization+Project-scoped context builder; a synchronous chat service and route (not the
+async-job pattern Phases 9/13 use — a conversational UX needs the reply in the same request);
+grounding data actually reaching the model via `CloudLLMProvider.chat()`'s system prompt, labeled
+as untrusted data for prompt-injection defense; and a full chat UI replacing the coming-soon page.
+
+- [X] T256 [US10] [Backend] Implement bounded context builder (test cases, recent runs, issues — capped and truncated; `Project.settings` deliberately excluded), backend/src/testpilot/assistant/context_builder.py (Req: FR-098) - depends on T177
+- [X] T257 [US10] [Backend] Implement assistant chat orchestration service (conversation get-or-create, history threading capped at 20 messages, bounded provider retry, billing usage reservation), backend/src/testpilot/assistant/service.py (Req: FR-097, FR-099, FR-101, FR-103) - depends on T256
+- [X] T258 [US10] [AI] Wire `grounding_data` into `CloudLLMProvider.chat()` via the Anthropic `system` parameter with an explicit "this is data, not instructions" notice, backend/src/testpilot/ai_provider/cloud.py (Req: FR-098) - depends on T178
+- [X] T259 [US10] [Backend] Replace the 501 stub with the real synchronous `POST /assistant/chat` route; add `AssistantUnavailableError` (503) for safe provider-failure responses, backend/src/testpilot/api/v1/assistant.py, backend/src/testpilot/core/exceptions.py, backend/src/testpilot/assistant/schemas.py (Req: FR-097, FR-100) - depends on T257, T258
+- [X] T260 [US10] [Frontend] Replace the coming-soon scaffold with a full chat UI (message bubbles, markdown rendering, empty state with suggested prompts, loading/typing indicator, inline error+retry, project-context indicator that locks once a conversation starts), frontend/src/app/(dashboard)/assistant/page.tsx, frontend/src/features/assistant/useAssistantChat.ts (Req: FR-099, FR-100) - depends on T259
+- [X] T261 [US10] [Testing] Contract tests: authentication, authorized/unauthorized/cross-org project access, empty/oversized message validation, provider-failure mapping, conversation continuity and cross-user isolation, backend/tests/contract/test_assistant_chat.py (replaces T181's test_assistant_stub.py) (Req: FR-097 to FR-101, FR-103) - depends on T259
+- [X] T262 [US10] [Testing] Integration tests: bounded context construction (per-entity caps, text truncation), `Project.settings` never surfaced, bounded-retry policy, user-message durability on provider failure, conversation history threaded into the next provider call, backend/tests/integration/test_assistant_context_builder.py, backend/tests/integration/test_assistant_chat_service.py (Req: FR-098, FR-101, FR-103) - depends on T256, T257
+- [X] T263 [US10] [Testing] Unit tests: grounding_data reaches the model via the system prompt (not `messages`), prompt-injection content stays delimited and labeled untrusted, backend/tests/unit/test_ai_provider_cloud.py (Req: FR-098) - depends on T258
+- [X] T264 [US10] [Testing] Frontend component tests (empty state, suggested prompt, send/loading/error states, markdown rendering, project-context persistence) and an E2E spec for the authenticated chat flow, frontend/tests/unit/pages/assistant.test.tsx, frontend/tests/e2e/assistant.spec.ts (Req: FR-097, FR-099, FR-100) - depends on T260
+
+**Checkpoint**: The AI QA Assistant is functional end-to-end — `POST /assistant/chat` returns real,
+project-grounded or general answers; the chat UI is usable; 399/399 backend tests pass (ruff/mypy
+clean), 38/38 frontend tests pass (lint/typecheck/build clean), and both new E2E scenarios pass.
+FR-102 (citing/linking specific entities in a response) is **not** covered by these tasks — see
+the Notes section's post-implementation record below.
 
 ---
 
@@ -744,7 +769,7 @@ isolation, and leave the codebase in a release-ready state.
 - **US7 (Issues, P2)**: Depends on US4 (can originate from a result) but also independently usable for manual issues once US2 exists.
 - **US8 (Reports, P2)**: Depends on US4 (test run data) and US7 (issue data).
 - **US9 (Notifications, P2)**: Depends on US4 and US5 (the events it notifies about).
-- **US10 (AI Assistant, P3, Future)**: Depends only on US1 (org context); scaffold-only in this task list.
+- **US10 (AI Assistant, P3, Future)**: Depends only on US1 (org context); scaffolded (T177-T181), then fully implemented (T256-T264) — see Phase 15's post-implementation record.
 - **US11 (Multi-member Orgs, P3, Future)**: Depends only on US1; scaffold-only in this task list.
 - **US12 (Subscription Architecture, P3)**: Delivered incrementally inside Phase 6 (billing) rather than as its own phase, since spec.md frames it as cross-cutting architecture, not a standalone user flow.
 
@@ -797,7 +822,9 @@ Task: "Implement JWT access-token sign/verify utilities - backend/src/testpilot/
 9. Add Phase 14 (Issues, US7) → validate quickstart.md Section 9.
 10. Add Phase 16 (Reports, US8) → validate quickstart.md Section 10.
 11. Add Phase 17 (Notifications, US9) → validate quickstart.md Section 11.
-12. Add Phase 15 (AI Assistant scaffold, US10, Future) — no functional validation, coming-soon state only.
+12. Add Phase 15 (AI Assistant, US10, Future) — originally a coming-soon scaffold with no
+    functional validation; later completed (T256-T264) into a fully functional chat feature
+    validated against 399 backend + 38 frontend tests and a dedicated E2E spec.
 13. Run Phases 18-22 (hardening passes) against everything built so far.
 14. Run Phases 23-25 (Docker, CI/CD, Kubernetes manifests).
 15. Run Phase 26 (final integration) as the release gate.
@@ -829,8 +856,27 @@ With multiple developers, once Phase 6 completes:
 - Tests are mandatory here, not optional, per the constitution's Test-First (NON-NEGOTIABLE) principle — write the test, confirm it fails, then implement.
 - Commit after each task or logical group, per repository convention.
 - Stop at any Checkpoint to validate a story independently before continuing.
-- Total: 255 tasks across 26 phases. MVP-critical path (Phases 1-14, 16-26, excluding the explicitly Future-labeled Phase 15 and the Future-labeled tasks within Phases 6 and 16): the vast majority of the 255 — only T083, T084 (Phase 6), T177-T181 (Phase 15), and T188 (Phase 16) are Future-scope/scaffold-only tasks; every other task is MVP, including all 14 CLI tasks (T242-T255) distributed per-domain per the constitution's CLI Interface principle (see the build-order note near the top of this file).
+- Total: 264 tasks across 26 phases (255 original + T256-T264 added post-implementation, see
+  below). MVP-critical path (Phases 1-14, 16-26, excluding the explicitly Future-labeled tasks
+  within Phases 6 and 16): the vast majority of the 264 — T083, T084 (Phase 6), T177-T181 (Phase
+  15 scaffold), and T188 (Phase 16) remain Future-scope/scaffold-only tasks; every other task is
+  MVP, including all 14 CLI tasks (T242-T255) distributed per-domain per the constitution's CLI
+  Interface principle (see the build-order note near the top of this file). Phase 15 as a whole
+  is no longer scaffold-only: T256-T264 delivered a fully functional AI QA Assistant on top of
+  the T177-T181 scaffold — it remains outside the *original* MVP-critical path (it was never
+  required for the "URL to tested and reported" core loop) but is fully implemented and verified.
 - **Post-analysis remediation record**: T241 (account-deletion endpoint, DATA-004) and T242-T255 (14 distributed per-domain CLI tasks) were added after a `/speckit-analyze` pass found a real coverage gap and a constitution-sequencing issue respectively. T238 itself was not removed — it was revised in place (same ID, scope narrowed from "implement every CLI command" to "assemble the already-built commands into one entrypoint"), so no previously-valid task was deleted; its dependencies were updated to point at the new distributed tasks instead of raw library modules.
+- **Post-implementation record (AI QA Assistant, Phase 15)**: T256-T264 were added after the AI
+  QA Assistant chat feature (deferred by Phase 15's original "Scaffold Only" scope) was actually
+  built and verified in a follow-up session — commit `b01be8ad9fdc1143847624c9703de78117fef78a`.
+  This delivers FR-097, FR-098, FR-099, FR-100, FR-101, and FR-103 (see spec.md's updated tags on
+  each). **FR-102 (citing/linking specific project entities in a data-grounded response) was
+  deliberately left unimplemented** — `ChatResponse.referenced_entities` exists in the schema for
+  forward compatibility but is never populated by either `LLMProvider` adapter, and the frontend
+  renders no citation UI. FR-023 (the AI Assistant nav entry) was already satisfied by T180 and is
+  unaffected by this record. T181's original scaffold test (`test_assistant_stub.py`, asserting a
+  501 response) was deleted and replaced by T261's `test_assistant_chat.py`, which is why T181 is
+  annotated "superseded" above rather than left silently orphaned.
 - **Requirement-coverage note**: every spec.md functional requirement is either cited directly by a task's `(Req: ...)` tag, covered by a range citation (e.g., "FR-041 to FR-044"), or is one of the following Future-scope "must not preclude a later redesign" requirements that this task list satisfies through architectural choice rather than a dedicated buildable task: FR-034 (project tagging — precluded by nothing in the projects schema, T088), FR-048 (authenticated-flow analysis — precluded by nothing in T125's interface-based engine), FR-058 (bulk test-case operations — precluded by nothing in T101's service layer), FR-077 (parallel execution — precluded by nothing in T137's per-case orchestration loop), FR-078 (run cancellation — precluded by nothing in T136's status enum), FR-117 (notification channels beyond in-app — precluded by nothing in T190's notification schema), FR-118 (per-user notification preferences — precluded by nothing in T190's notification schema), FR-011 (additional auth methods such as SSO/OAuth — precluded by nothing in T042/T049's session model). None of these eight require code today; they require that today's code not paint the project into a corner, which the cited MVP tasks already ensure. The same logic covers INT-005, INT-006, and INT-007 (payment gateway, CI/CD webhook triggers, chat-platform notifications — all explicitly Future Scope) and SEC-005 (the MVP satisfies "never store site-under-test credentials" by simply never building that capability anywhere in this task list, not by a task that enforces an absence).
 - **Non-functional / success-criteria validation note**: NFR-001 to NFR-003 (dashboard/report/run-trigger latency targets) and every SC-001 to SC-010 success criterion are outcome-level measurements, not individually buildable tasks — they are what Phase 26's quickstart execution (T234-T239) validates the finished system against, per quickstart.md's own structure. If any measurement fails during Phase 26, the fix is a task added to the relevant earlier phase, not a new Phase 26 task.
 

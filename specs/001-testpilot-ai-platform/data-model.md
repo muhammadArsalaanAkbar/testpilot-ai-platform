@@ -422,8 +422,10 @@ Append-only; no update/delete path is built for it at the application layer (SEC
 Documented here so `/speckit-tasks` does not need to redesign these when Future Scope items are
 picked up; **no migration for these ships in the MVP**.
 
-- **`assistant_conversations`** / **`assistant_messages`**: AI QA Assistant chat history
-  (FR-097–FR-103). Shape: `assistant_conversations(id, organization_id, user_id, project_id
+- ~~`assistant_conversations` / `assistant_messages`~~ — **implemented** (migration
+  `923db416ced2`, live schema; FR-097–FR-101 and FR-103, see spec.md and tasks.md Phase 15's
+  post-implementation record). No longer Future-only; kept here only as history. Shape as
+  originally documented: `assistant_conversations(id, organization_id, user_id, project_id
   nullable, created_at)`, `assistant_messages(id, conversation_id, role, content, created_at)`.
 - **`invitations`**: pending org invites (FR-016). Shape: `invitations(id, organization_id,
   email, role, invited_by_user_id, token_hash, expires_at, accepted_at)`.

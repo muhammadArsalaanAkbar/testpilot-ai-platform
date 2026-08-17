@@ -314,7 +314,8 @@ app/
     │       │   ├── new/page.tsx       # Manual issue (FR-088)
     │       │   └── [issueId]/page.tsx # Issue detail (FR-089–FR-092, FR-095)
     │       └── reports/page.tsx       # Project report/analytics (FR-104–FR-110)
-    ├── assistant/page.tsx             # AI QA Assistant chat — Future (FR-097–FR-103), scaffolded
+    ├── assistant/page.tsx             # AI QA Assistant chat — Future (FR-097–FR-103), implemented
+    │                                   # (FR-102 entity citations excepted; tasks.md Phase 15)
     ├── settings/
     │   ├── profile/page.tsx           # Name/email/password (FR-006)
     │   ├── security/page.tsx          # Active sessions, logout-everywhere (FR-008)

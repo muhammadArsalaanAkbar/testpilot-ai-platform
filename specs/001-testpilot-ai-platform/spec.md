@@ -688,23 +688,34 @@ describe the direction the architecture must not preclude.
 
 #### AI QA Assistant
 
-- **FR-097** (Future): System MUST provide a conversational interface where a user can ask
-  natural-language questions about their Organization's projects, test cases, test runs,
-  failures, and issues.
-- **FR-098** (Future): System MUST ground assistant answers about a specific project in that
-  project's actual current data (test cases, recent runs, open issues) rather than generic
-  text, and MUST scope that data access to the requesting user's Organization.
-- **FR-099** (Future): System MUST allow the assistant to answer general QA-strategy questions
-  that are not grounded in a specific project's data, while distinguishing such answers from
-  data-grounded ones.
-- **FR-100** (Future): System MUST surface a clear error state in the assistant UI when the
-  underlying AI provider is unavailable, rather than silently failing or fabricating an answer.
-- **FR-101** (Future): System MUST retain assistant conversation history per user so a
-  multi-turn conversation retains context within a session.
+- **FR-097** (Future — Implemented): System MUST provide a conversational interface where a user
+  can ask natural-language questions about their Organization's projects, test cases, test runs,
+  failures, and issues. Delivered via `POST /assistant/chat` and the `/assistant` chat UI — see
+  tasks.md Phase 15's post-implementation record.
+- **FR-098** (Future — Implemented): System MUST ground assistant answers about a specific
+  project in that project's actual current data (test cases, recent runs, open issues) rather
+  than generic text, and MUST scope that data access to the requesting user's Organization.
+  Delivered via `assistant/context_builder.py`'s bounded, Organization+Project-scoped context
+  builder.
+- **FR-099** (Future — Implemented): System MUST allow the assistant to answer general
+  QA-strategy questions that are not grounded in a specific project's data, while distinguishing
+  such answers from data-grounded ones. Delivered via the optional `project_id`, the response's
+  `grounded` flag, and the UI's "Grounded in X" / "General assistant" indicator.
+- **FR-100** (Future — Implemented): System MUST surface a clear error state in the assistant UI
+  when the underlying AI provider is unavailable, rather than silently failing or fabricating an
+  answer. Delivered via `AssistantUnavailableError` (503) and the chat UI's inline error+retry.
+- **FR-101** (Future — Implemented): System MUST retain assistant conversation history per user
+  so a multi-turn conversation retains context within a session. Delivered via
+  `assistant_conversations`/`assistant_messages` persistence, isolated per user+Organization, and
+  threaded into each subsequent provider call.
 - **FR-102** (Future): The assistant MUST cite or link to the specific project entities (test
-  case, run, issue) it references when answering a data-grounded question.
-- **FR-103** (Future): System MUST rate-limit assistant usage per Organization consistent with
-  its subscription plan's AI usage limits (FR-125).
+  case, run, issue) it references when answering a data-grounded question. **Not yet
+  implemented** — `ChatResponse.referenced_entities` exists in the schema but is never populated;
+  no entity-citation mechanism was built in this pass.
+- **FR-103** (Future — Implemented): System MUST rate-limit assistant usage per Organization
+  consistent with its subscription plan's AI usage limits (FR-125). Delivered via
+  `billing_service.check_and_reserve_period_usage(metric="ai_operations")`, the same mechanism
+  `ai_generation`/`ai_analysis` use.
 
 #### Reports & Analytics
 
@@ -1065,7 +1076,9 @@ Explicitly deferred beyond the MVP:
    (FR-048, and reversal of SEC-005's absence-of-capability constraint).
 2. Full multi-member Organizations: invitations, roles beyond a single Owner, member removal
    (FR-016–FR-019, FR-094).
-3. AI QA Assistant conversational interface (FR-097–FR-103, FR-023).
+3. AI QA Assistant conversational interface (FR-097–FR-103, FR-023). **FR-097–FR-101 and
+   FR-103 implemented** (tasks.md Phase 15 post-implementation record); **FR-102 (entity
+   citations) remains unimplemented**. FR-023 status unchanged by this update.
 4. Trend reporting, Organization-level rollup reports, and report export (FR-108–FR-109,
    FR-111).
 5. Additional notification channels (email/webhook) and per-user notification preferences
