@@ -21,6 +21,7 @@ import httpx
 
 from testpilot.ai_provider.base import (
     AIProviderError,
+    ChatCitation,
     ChatContext,
     ChatResponse,
     FailureAnalysis,
@@ -85,6 +86,44 @@ _ANALYZE_FAILURE_TOOL: dict[str, Any] = {
             "expected_vs_actual": {"type": "string"},
         },
         "required": ["explanation", "root_cause", "severity", "suggested_fix", "expected_vs_actual"],
+    },
+}
+
+# FR-102: forced tool-use (not free text + regex) for the same reason
+# generate_test_cases/analyze_failure use it — the adapter is responsible for
+# never returning output the caller has to parse itself. `entity_id` values
+# are NOT trusted as authorization-valid just because the model returned
+# them; assistant/service.py re-validates every citation against the
+# request's own grounding_data before any of it reaches a response
+# (context_builder.py's `extract_citable_entities`).
+_CHAT_RESPONSE_TOOL: dict[str, Any] = {
+    "name": "submit_chat_response",
+    "description": (
+        "Submit your answer to the user's question, along with citations for any specific "
+        "test case, test run, or issue entities from CONTEXT DATA that directly support it."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "answer": {"type": "string", "description": "Your complete answer to the user, in markdown."},
+            "citations": {
+                "type": "array",
+                "description": (
+                    "Entities from CONTEXT DATA that support this answer. Use the exact `id` "
+                    "values as they appear in CONTEXT DATA — never invent or guess one. Leave "
+                    "empty if your answer is not grounded in specific entities."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "entity_type": {"type": "string", "enum": ["test_case", "test_run", "issue"]},
+                        "entity_id": {"type": "string"},
+                    },
+                    "required": ["entity_type", "entity_id"],
+                },
+            },
+        },
+        "required": ["answer", "citations"],
     },
 }
 
@@ -300,8 +339,9 @@ class CloudLLMProvider:
             raise AIProviderError(f"AI provider returned malformed structured output: {exc}", retryable=False) from exc
 
     async def chat(self, context: ChatContext) -> ChatResponse:
-        """AI QA Assistant (FR-097-FR-103). Plain-text response, no tool-use
-        needed since there is no structured shape to enforce yet.
+        """AI QA Assistant (FR-097-FR-103). Forced tool-use (FR-102) so
+        citations are structurally parsed, same as generate_test_cases/
+        analyze_failure — never regex-parsed out of free text.
 
         `grounding_data` — assembled by `assistant/context_builder.py` from
         the caller's own Organization-scoped data — is passed via the
@@ -310,18 +350,48 @@ class CloudLLMProvider:
         explicitly labeled as untrusted data the model must not treat as
         instructions (see `_build_chat_system_prompt`), since it can contain
         crawled page text, test names, or failure output a malicious site
-        could have engineered as a prompt-injection payload.
+        could have engineered as a prompt-injection payload — including as
+        an attempt to manufacture a citation to something it shouldn't be
+        able to reference. This adapter does not itself decide whether a
+        citation is authorized; it only parses the model's claimed
+        `(entity_type, entity_id)` pairs into `ChatCitation`s. The actual
+        authorization check — is this really an entity from this request's
+        own grounding_data — happens in assistant/service.py, the only layer
+        that can compare against ground truth.
         """
+        # **kwargs spread (see generate_test_cases' own comment on this same
+        # pattern): the tool schema is a plain dict[str, Any], not the SDK's
+        # TypedDicts, which mypy's strict overload matching rejects in a
+        # direct keyword call but accepts via a lenient dict spread.
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": 1024,
+            "system": _build_chat_system_prompt(context.grounding_data),
+            "tools": [_CHAT_RESPONSE_TOOL],
+            "tool_choice": {"type": "tool", "name": "submit_chat_response"},
+            "messages": [{"role": m.role, "content": m.content} for m in context.messages],
+        }
         try:
-            response = await self._client.messages.create(
-                model=self.model,
-                max_tokens=1024,
-                system=_build_chat_system_prompt(context.grounding_data),
-                messages=[{"role": m.role, "content": m.content} for m in context.messages],
-            )
+            response = await self._client.messages.create(**kwargs)
         except anthropic.APIError as exc:
             raise self._map_error(exc) from exc
 
-        text_block = next((block for block in response.content if block.type == "text"), None)
-        message = text_block.text if text_block is not None else ""
-        return ChatResponse(message=message, grounded=context.grounding_data is not None)
+        tool_use_block = next((block for block in response.content if block.type == "tool_use"), None)
+        if tool_use_block is None:
+            raise AIProviderError("AI provider did not return structured tool-use output", retryable=False)
+
+        try:
+            raw_input = tool_use_block.input
+            assert isinstance(raw_input, dict)
+            answer = raw_input["answer"]
+            assert isinstance(answer, str)
+            citations = [
+                ChatCitation(entity_type=raw["entity_type"], entity_id=raw["entity_id"])
+                for raw in raw_input.get("citations") or []
+            ]
+        except (KeyError, TypeError, AssertionError) as exc:
+            raise AIProviderError(f"AI provider returned malformed structured output: {exc}", retryable=False) from exc
+
+        return ChatResponse(
+            message=answer, grounded=context.grounding_data is not None, referenced_entities=citations
+        )

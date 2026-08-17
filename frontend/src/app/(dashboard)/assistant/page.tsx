@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertTriangle, Bot, RotateCcw, Send, Sparkles, User } from "lucide-react";
+import { AlertTriangle, Bot, Bug, ClipboardList, Play, RotateCcw, Send, Sparkles, User } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/Button";
@@ -8,6 +9,7 @@ import { Card, CardContent } from "@/components/Card";
 import { apiClient, ApiError } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
 import { useAssistantChat } from "@/features/assistant/useAssistantChat";
+import type { ChatCitation } from "@/features/assistant/useAssistantChat";
 
 interface Project {
   id: string;
@@ -20,6 +22,7 @@ interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  citations?: ChatCitation[];
 }
 
 const SUGGESTED_PROMPTS = [
@@ -82,7 +85,15 @@ export default function AssistantPage() {
     try {
       const response = await chat.mutateAsync({ message: text, conversationId, projectId });
       setConversationId(response.conversation_id);
-      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: response.message }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: response.message,
+          citations: response.referenced_entities,
+        },
+      ]);
     } catch (err) {
       setErrorMessage(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
     }
@@ -272,7 +283,37 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             {message.content}
           </ReactMarkdown>
         )}
+        {!isUser && message.citations && message.citations.length > 0 && (
+          <CitationList citations={message.citations} />
+        )}
       </div>
+    </div>
+  );
+}
+
+const CITATION_ICON = { test_case: ClipboardList, test_run: Play, issue: Bug } as const;
+const CITATION_LABEL = { test_case: "Test case", test_run: "Test run", issue: "Issue" } as const;
+
+/** FR-102: server-validated references the answer is grounded in — every
+ * citation here already survived assistant/service.py's authorization
+ * check, so it's always safe to render as a direct link. */
+function CitationList({ citations }: { citations: ChatCitation[] }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border/60 pt-2">
+      {citations.map((citation) => {
+        const Icon = CITATION_ICON[citation.entity_type];
+        return (
+          <Link
+            key={`${citation.entity_type}:${citation.entity_id}`}
+            href={citation.url}
+            className="inline-flex items-center gap-1 rounded-full border border-border bg-background/60 px-2 py-1 text-caption text-foreground transition-colors hover:bg-background"
+          >
+            <Icon className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="text-muted-foreground">{CITATION_LABEL[citation.entity_type]}:</span>
+            <span className="max-w-[16rem] truncate">{citation.title}</span>
+          </Link>
+        );
+      })}
     </div>
   );
 }

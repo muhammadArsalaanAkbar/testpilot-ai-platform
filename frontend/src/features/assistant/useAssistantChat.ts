@@ -3,11 +3,20 @@
 import { useMutation } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 
+export type CitationEntityType = "test_case" | "test_run" | "issue";
+
+export interface ChatCitation {
+  entity_type: CitationEntityType;
+  entity_id: string;
+  title: string;
+  url: string;
+}
+
 export interface ChatResponseBody {
   conversation_id: string;
   message: string;
   grounded: boolean;
-  referenced_entities: string[];
+  referenced_entities: ChatCitation[];
 }
 
 interface SendMessageInput {

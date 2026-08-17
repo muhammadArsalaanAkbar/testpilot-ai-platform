@@ -708,10 +708,18 @@ describe the direction the architecture must not preclude.
   so a multi-turn conversation retains context within a session. Delivered via
   `assistant_conversations`/`assistant_messages` persistence, isolated per user+Organization, and
   threaded into each subsequent provider call.
-- **FR-102** (Future): The assistant MUST cite or link to the specific project entities (test
-  case, run, issue) it references when answering a data-grounded question. **Not yet
-  implemented** — `ChatResponse.referenced_entities` exists in the schema but is never populated;
-  no entity-citation mechanism was built in this pass.
+- **FR-102** (Future — Implemented): The assistant MUST cite or link to the specific project
+  entities (test case, run, issue) it references when answering a data-grounded question.
+  Delivered via forced structured tool-use (`CloudLLMProvider.chat()`'s `submit_chat_response`,
+  `FakeLLMProvider`'s deterministic equivalent) so citations are never regex-parsed from free
+  text, plus server-side validation in `assistant/service.py`'s `_resolve_citations`: a citation
+  the model reports is kept only if it exactly matches an entity present in that exact request's
+  own `grounding_data` (built by `context_builder.py`'s `extract_citable_entities`) — a
+  hallucinated, foreign-Organization, or prompt-injected reference is silently dropped, never
+  surfaced. `title`/`url` on every returned citation are resolved server-side from data the
+  server itself fetched, never from the model's own output, so no arbitrary URL or ID can reach
+  the response. The chat UI renders each citation as a link to the real entity. See tasks.md
+  Phase 15's post-implementation record.
 - **FR-103** (Future — Implemented): System MUST rate-limit assistant usage per Organization
   consistent with its subscription plan's AI usage limits (FR-125). Delivered via
   `billing_service.check_and_reserve_period_usage(metric="ai_operations")`, the same mechanism
@@ -1076,9 +1084,9 @@ Explicitly deferred beyond the MVP:
    (FR-048, and reversal of SEC-005's absence-of-capability constraint).
 2. Full multi-member Organizations: invitations, roles beyond a single Owner, member removal
    (FR-016–FR-019, FR-094).
-3. AI QA Assistant conversational interface (FR-097–FR-103, FR-023). **FR-097–FR-101 and
-   FR-103 implemented** (tasks.md Phase 15 post-implementation record); **FR-102 (entity
-   citations) remains unimplemented**. FR-023 status unchanged by this update.
+3. AI QA Assistant conversational interface (FR-097–FR-103, FR-023). **FR-097–FR-103 all
+   implemented** (tasks.md Phase 15 post-implementation record). FR-023 status unchanged by this
+   update.
 4. Trend reporting, Organization-level rollup reports, and report export (FR-108–FR-109,
    FR-111).
 5. Additional notification channels (email/webhook) and per-user notification preferences

@@ -157,6 +157,45 @@ describe("AssistantPage", () => {
     expect(strong.tagName).toBe("STRONG");
   });
 
+  it("renders a citation link for each referenced entity in a grounded response", async () => {
+    mockedPost.mockResolvedValue({
+      conversation_id: "66666666-6666-6666-6666-666666666666",
+      message: "Your login test case covers this.",
+      grounded: true,
+      referenced_entities: [
+        {
+          entity_type: "test_case",
+          entity_id: "77777777-7777-7777-7777-777777777777",
+          title: "Login with valid credentials",
+          url: "/projects/p-1/test-cases/77777777-7777-7777-7777-777777777777",
+        },
+      ],
+    });
+    renderPage();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "Suggest regression tests" }));
+
+    const citationLink = await screen.findByRole("link", { name: /Test case:.*Login with valid credentials/ });
+    expect(citationLink).toHaveAttribute("href", "/projects/p-1/test-cases/77777777-7777-7777-7777-777777777777");
+  });
+
+  it("renders no citations when the response has none", async () => {
+    mockedPost.mockResolvedValue({
+      conversation_id: "88888888-8888-8888-8888-888888888888",
+      message: "General QA advice with nothing to cite.",
+      grounded: false,
+      referenced_entities: [],
+    });
+    renderPage();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "Suggest regression tests" }));
+
+    await screen.findByText("General QA advice with nothing to cite.");
+    expect(screen.queryByRole("link", { name: /Test case:|Test run:|Issue:/ })).not.toBeInTheDocument();
+  });
+
   it("keeps the same project selected for the rest of a conversation and sends it with each message", async () => {
     mockedGet.mockResolvedValue({
       items: [

@@ -191,3 +191,103 @@ async def test_chat_with_a_nonexistent_conversation_id_returns_404(client):
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "not_found"
+
+
+async def _create_test_case(client, token, project_id, title="Login with valid credentials"):
+    r = await client.post(
+        f"/projects/{project_id}/test-cases",
+        json={"title": title, "description": "Verifies login succeeds.", "priority": "high", "severity": "major"},
+        headers=_auth_headers(token),
+    )
+    return r.json()["id"]
+
+
+async def test_chat_with_a_grounded_project_returns_valid_citations(client):
+    """FR-102: the fake provider deterministically cites the first test
+    case present in grounding_data — end-to-end proof the citation actually
+    reaches the HTTP response with a real, dereferenceable id/title/url."""
+    token, _ = await _signup_and_get_token(client)
+    project_id = await _create_project(client, token)
+    test_case_id = await _create_test_case(client, token, project_id)
+
+    response = await client.post(
+        "/assistant/chat",
+        json={"message": "What are my most important test cases?", "project_id": project_id},
+        headers=_auth_headers(token),
+    )
+
+    assert response.status_code == 200
+    citations = response.json()["referenced_entities"]
+    assert len(citations) == 1
+    assert citations[0]["entity_type"] == "test_case"
+    assert citations[0]["entity_id"] == test_case_id
+    assert citations[0]["title"] == "Login with valid credentials"
+    assert citations[0]["url"] == f"/projects/{project_id}/test-cases/{test_case_id}"
+
+
+async def test_chat_without_a_project_returns_no_citations(client):
+    token, _ = await _signup_and_get_token(client)
+
+    response = await client.post("/assistant/chat", json={"message": "What's a good QA strategy?"}, headers=_auth_headers(token))
+
+    assert response.status_code == 200
+    assert response.json()["referenced_entities"] == []
+
+
+async def test_chat_never_returns_a_citation_to_another_organizations_entity(client, monkeypatch):
+    """Simulates a compromised/hallucinating provider that always claims a
+    citation to a real entity from a DIFFERENT Organization's project —
+    proves server-side validation (not just "the model wouldn't do that")
+    is what keeps this out of the response."""
+    from testpilot.ai_provider.base import ChatCitation, ChatContext, ChatResponse
+    from testpilot.api.v1 import assistant as assistant_route
+
+    token_a, _ = await _signup_and_get_token(client, email="assistant-citation-org-a@example.com")
+    other_org_project_id = await _create_project(client, token_a)
+    other_org_test_case_id = await _create_test_case(client, token_a, other_org_project_id)
+
+    class _MaliciousProvider:
+        provider_name = "malicious"
+        model = "malicious"
+
+        async def chat(self, context: ChatContext) -> ChatResponse:
+            return ChatResponse(
+                message="Here's an answer.",
+                grounded=context.grounding_data is not None,
+                referenced_entities=[ChatCitation(entity_type="test_case", entity_id=other_org_test_case_id)],
+            )
+
+    monkeypatch.setattr(assistant_route, "get_provider", lambda: _MaliciousProvider())
+
+    token_b, _ = await _signup_and_get_token(client, email="assistant-citation-org-b@example.com")
+    project_id_b = await _create_project(client, token_b)
+    await _create_test_case(client, token_b, project_id_b, title="Org B's own test case")
+
+    response = await client.post(
+        "/assistant/chat",
+        json={"message": "What should I test?", "project_id": project_id_b},
+        headers=_auth_headers(token_b),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["referenced_entities"] == []
+
+
+async def test_chat_citations_never_expose_project_settings(client):
+    token, _ = await _signup_and_get_token(client)
+    r = await client.post(
+        "/projects",
+        json={"name": "Secret Project", "url": "https://example.com", "settings": {"api_key": "sk-should-never-leak"}},
+        headers=_auth_headers(token),
+    )
+    project_id = r.json()["id"]
+    await _create_test_case(client, token, project_id)
+
+    response = await client.post(
+        "/assistant/chat",
+        json={"message": "What should I test?", "project_id": project_id},
+        headers=_auth_headers(token),
+    )
+
+    assert response.status_code == 200
+    assert "sk-should-never-leak" not in response.text

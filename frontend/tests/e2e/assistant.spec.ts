@@ -71,4 +71,44 @@ test.describe("AI QA Assistant chat (FR-097-FR-103)", () => {
     // picker at all, so this is confirmed via the indicator persisting.
     await expect(groundedIndicator).toBeVisible();
   });
+
+  test("a grounded answer includes a citation link to the actual test case", async ({ page }) => {
+    const email = `assistant-citation-e2e-${Date.now()}@example.com`;
+    const password = "correct horse battery staple citation";
+
+    await page.goto("/signup");
+    await page.getByLabel("Name").fill("Assistant Citation E2E User");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Sign up" }).click();
+    await expect(page).toHaveURL(/\/overview$/);
+
+    await page.goto("/projects/new");
+    await page.getByLabel("Name").fill("Assistant Citation Project");
+    await page.getByLabel("Target URL").fill("https://example.com");
+    await page.getByRole("button", { name: "Create project" }).click();
+    await expect(page).toHaveURL(/\/projects\/(?<projectId>[0-9a-f-]+)$/);
+    const projectId = page.url().split("/projects/")[1];
+
+    await page.getByRole("navigation", { name: "Project" }).getByRole("link", { name: "Test cases" }).click();
+    await page.getByRole("link", { name: "Create a test case" }).click();
+    await page.getByLabel("Title").fill("Login with valid credentials");
+    await page.getByLabel("Description").fill("Verify login succeeds with a valid username and password.");
+    await page.getByLabel("Priority").selectOption("high");
+    await page.getByLabel("Severity").selectOption("major");
+    await page.getByRole("button", { name: "Create test case" }).click();
+    await expect(page.getByRole("heading", { name: "Login with valid credentials" })).toBeVisible();
+
+    await page.goto("/assistant");
+    await page.getByLabel("Message", { exact: true }).fill("What are my most important test cases?");
+    await page.getByRole("button", { name: "Send message" }).click();
+    await expect(page.getByText(/I received your message/)).toBeVisible({ timeout: 15_000 });
+
+    // The fake provider deterministically cites the first test case present
+    // in grounding_data — proof the citation survived the full round trip
+    // (context builder -> fake adapter -> server-side validation -> UI).
+    const citationLink = page.getByRole("link", { name: /Test case:.*Login with valid credentials/ });
+    await expect(citationLink).toBeVisible();
+    await expect(citationLink).toHaveAttribute("href", new RegExp(`^/projects/${projectId}/test-cases/`));
+  });
 });

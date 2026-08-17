@@ -19,12 +19,20 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from testpilot.ai_provider.base import AIProviderError, ChatContext, ChatMessage, LLMProvider
-from testpilot.assistant.context_builder import build_project_context
+from testpilot.ai_provider.base import (
+    AIProviderError,
+    ChatCitation,
+    ChatContext,
+    ChatMessage,
+    CitableEntityType,
+    LLMProvider,
+)
+from testpilot.assistant.context_builder import build_project_context, extract_citable_entities
 from testpilot.assistant.models import AssistantConversation, AssistantMessage, AssistantMessageRole
 from testpilot.billing import service as billing_service
 from testpilot.core.db import session_scope
@@ -45,11 +53,59 @@ _MAX_ATTEMPTS = 2  # same bounded-retry policy as ai_analysis/service.py
 
 
 @dataclass(frozen=True)
+class AssistantCitation:
+    """A citation that survived server-side validation (FR-102) — every
+    field here is resolved from data the server itself fetched for this
+    request, never from the model's own output (see `_resolve_citations`)."""
+
+    entity_type: CitableEntityType
+    entity_id: uuid.UUID
+    title: str
+    url: str
+
+
+@dataclass(frozen=True)
 class AssistantChatResult:
     conversation_id: uuid.UUID
     message: str
     grounded: bool
-    referenced_entities: list[str]
+    referenced_entities: list[AssistantCitation]
+
+
+def _resolve_citations(
+    raw_citations: list[ChatCitation], *, grounding_data: dict[str, Any] | None, project_id: uuid.UUID | None
+) -> list[AssistantCitation]:
+    """FR-102's security requirement in code: a citation the provider
+    returned is NOT trusted just because it's structurally well-formed — it
+    is only kept if it exactly matches an entity present in this exact
+    request's own `grounding_data`. Anything else (a hallucinated ID, an ID
+    from a different Organization/project, or an ID a prompt-injection
+    payload tried to plant) is silently dropped — a bad citation doesn't
+    invalidate an otherwise-good answer, so this never raises.
+    """
+    if project_id is None or not raw_citations:
+        return []
+    citable_index = extract_citable_entities(grounding_data, project_id=project_id)
+
+    resolved: list[AssistantCitation] = []
+    seen: set[str] = set()
+    for raw in raw_citations:
+        key = f"{raw.entity_type}:{raw.entity_id}"
+        if key in seen:
+            continue
+        entity = citable_index.get(key)
+        if entity is None:
+            continue
+        seen.add(key)
+        resolved.append(
+            AssistantCitation(
+                entity_type=entity.entity_type,
+                entity_id=uuid.UUID(entity.entity_id),
+                title=entity.title,
+                url=entity.url,
+            )
+        )
+    return resolved
 
 
 async def _get_project_or_404(session: AsyncSession, *, organization_id: uuid.UUID, project_id: uuid.UUID) -> Project:
@@ -202,12 +258,18 @@ async def send_message(
             )
         )
 
+    citations = _resolve_citations(
+        response.referenced_entities, grounding_data=grounding_data, project_id=conversation.project_id
+    )
+
     logger.info(
-        "assistant_chat success conversation_id=%s project_id=%s provider=%s grounded=%s latency_ms=%d",
+        "assistant_chat success conversation_id=%s project_id=%s provider=%s grounded=%s "
+        "citations=%d latency_ms=%d",
         conversation.id,
         conversation.project_id,
         provider.provider_name,
         response.grounded,
+        len(citations),
         latency_ms,
     )
 
@@ -215,5 +277,5 @@ async def send_message(
         conversation_id=conversation.id,
         message=response.message,
         grounded=response.grounded,
-        referenced_entities=response.referenced_entities,
+        referenced_entities=citations,
     )

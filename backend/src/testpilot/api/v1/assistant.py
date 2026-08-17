@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from testpilot.ai_provider import get_provider
 from testpilot.api.deps import CurrentUser, get_current_user, limiter
 from testpilot.assistant import service
-from testpilot.assistant.schemas import ChatRequest, ChatResponse
+from testpilot.assistant.schemas import ChatCitationPublic, ChatRequest, ChatResponse
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
@@ -32,5 +32,8 @@ async def chat(
         conversation_id=result.conversation_id,
         message=result.message,
         grounded=result.grounded,
-        referenced_entities=result.referenced_entities,
+        referenced_entities=[
+            ChatCitationPublic(entity_type=c.entity_type, entity_id=c.entity_id, title=c.title, url=c.url)
+            for c in result.referenced_entities
+        ],
     )

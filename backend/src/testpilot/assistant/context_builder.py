@@ -32,11 +32,13 @@ corrupt legitimate content).
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from testpilot.ai_provider.base import CitableEntityType
 from testpilot.execution.artifact_models import Artifact
 from testpilot.execution.models import TestResult, TestRun
 from testpilot.issues.models import Issue
@@ -82,6 +84,62 @@ async def build_project_context(
     context["recent_runs"] = await _build_recent_runs(session, organization_id=organization_id, project_id=project_id)
     context["issues"] = await _build_issues(session, organization_id=organization_id, project_id=project_id)
     return context
+
+
+@dataclass(frozen=True)
+class CitableEntity:
+    """One entity from a request's own `grounding_data` that the assistant is
+    allowed to cite (FR-102) — `title`/`url` are resolved server-side from
+    data the server itself fetched, never from anything the model supplies."""
+
+    entity_type: CitableEntityType
+    entity_id: str
+    title: str
+    url: str
+
+
+def extract_citable_entities(
+    grounding_data: dict[str, Any] | None, *, project_id: uuid.UUID
+) -> dict[str, CitableEntity]:
+    """Indexes every citable entity (FR-102: test case, run, issue — not
+    artifacts or individual test results, which the requirement doesn't
+    name) actually present in `grounding_data`, keyed by
+    `"{entity_type}:{entity_id}"`.
+
+    Built by walking the SAME dict that was sent to the model, never a fresh
+    query, so this index can never diverge from what the model actually saw:
+    a citation validated against this index (assistant/service.py) is
+    provably an entity the requesting user was already authorized to see in
+    this exact request — never a hallucinated, foreign-Organization, or
+    prompt-injected reference, regardless of what the model claims.
+    """
+    if not grounding_data:
+        return {}
+
+    index: dict[str, CitableEntity] = {}
+    for test_case in grounding_data.get("test_cases", []):
+        index[f"test_case:{test_case['id']}"] = CitableEntity(
+            entity_type="test_case",
+            entity_id=test_case["id"],
+            title=test_case["title"],
+            url=f"/projects/{project_id}/test-cases/{test_case['id']}",
+        )
+    for run in grounding_data.get("recent_runs", []):
+        summary = run.get("summary", {})
+        index[f"test_run:{run['id']}"] = CitableEntity(
+            entity_type="test_run",
+            entity_id=run["id"],
+            title=f"Test run — {run['status']} ({summary.get('passed', 0)}/{summary.get('total', 0)} passed)",
+            url=f"/projects/{project_id}/test-runs/{run['id']}",
+        )
+    for issue in grounding_data.get("issues", []):
+        index[f"issue:{issue['id']}"] = CitableEntity(
+            entity_type="issue",
+            entity_id=issue["id"],
+            title=issue["title"],
+            url=f"/projects/{project_id}/issues/{issue['id']}",
+        )
+    return index
 
 
 async def _build_test_cases(
@@ -204,6 +262,7 @@ async def _build_issues(
     )
     return [
         {
+            "id": str(issue.id),
             "title": issue.title,
             "description": _truncate(issue.description),
             "severity": issue.severity.value,

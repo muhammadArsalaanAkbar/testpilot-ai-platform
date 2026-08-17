@@ -18,6 +18,10 @@ Severity = Literal["minor", "major", "critical", "blocker"]
 StepActionType = Literal[
     "navigate", "click", "type", "submit", "assert_url", "assert_content", "assert_element"
 ]
+# FR-102: the only entity types the assistant may cite — deliberately just
+# these three (the spec's own parenthetical: "test case, run, issue"), not
+# test results or artifacts.
+CitableEntityType = Literal["test_case", "test_run", "issue"]
 
 
 class AIProviderError(Exception):
@@ -117,7 +121,7 @@ class FailureAnalysis:
     expected_vs_actual: str
 
 
-# --- chat (Future AI QA Assistant; Protocol declared now per contract) ------
+# --- chat (AI QA Assistant, FR-097-FR-103) ---------------------------------
 
 
 @dataclass(frozen=True)
@@ -133,10 +137,26 @@ class ChatContext:
 
 
 @dataclass(frozen=True)
+class ChatCitation:
+    """A raw, adapter-reported entity reference (FR-102) — structurally
+    parsed from the model's output, but NOT yet authorization-validated.
+    `assistant/service.py` is the layer that checks each one against the
+    actual `grounding_data` for this request before it ever reaches a
+    response; an adapter's own output here must never be trusted as-is.
+    `entity_type` is typed `CitableEntityType` for downstream convenience,
+    but nothing prevents an adapter from constructing one with an
+    out-of-enum string parsed from untrusted model output — validation
+    happens by index lookup in `assistant/service.py`, not by this type."""
+
+    entity_type: CitableEntityType
+    entity_id: str
+
+
+@dataclass(frozen=True)
 class ChatResponse:
     message: str
     grounded: bool = False
-    referenced_entities: list[str] = field(default_factory=list)
+    referenced_entities: list[ChatCitation] = field(default_factory=list)
 
 
 class LLMProvider(Protocol):

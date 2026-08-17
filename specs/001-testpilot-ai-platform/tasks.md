@@ -508,7 +508,7 @@ correctly), create one manually, move it through its status lifecycle, filter th
 
 ---
 
-## Phase 15: AI QA Assistant, User Story 10, Priority P3, Future — Scaffold (T177-T181), later completed (T256-T264)
+## Phase 15: AI QA Assistant, User Story 10, Priority P3, Future — Scaffold (T177-T181), later completed (T256-T268)
 
 **Goal (original, Phase 15 scaffold step)**: Reserve the interface and data model for the
 conversational assistant without building its functionality, so it can be added later without a
@@ -543,8 +543,26 @@ as untrusted data for prompt-injection defense; and a full chat UI replacing the
 **Checkpoint**: The AI QA Assistant is functional end-to-end — `POST /assistant/chat` returns real,
 project-grounded or general answers; the chat UI is usable; 399/399 backend tests pass (ruff/mypy
 clean), 38/38 frontend tests pass (lint/typecheck/build clean), and both new E2E scenarios pass.
-FR-102 (citing/linking specific entities in a response) is **not** covered by these tasks — see
-the Notes section's post-implementation record below.
+FR-102 (citing/linking specific entities in a response) is covered separately below.
+
+### Phase 15 (continued, part 2): FR-102 citation support (post-scaffold follow-up)
+
+**Goal**: Let the assistant cite the specific test case/run/issue entities a grounded answer
+relies on, without trusting the model's own claim about what it's citing — every citation
+returned to the client must be independently, server-side proven to be an entity the requesting
+user was actually authorized to see in that exact request.
+
+- [X] T265 [US10] [Backend] Forced structured citation output: `CloudLLMProvider.chat()`'s `submit_chat_response` tool-use call (`{answer, citations: [{entity_type, entity_id}]}`, never free-text/regex-parsed), `FakeLLMProvider`'s deterministic equivalent, `ChatCitation`/`CitableEntityType` on the `LLMProvider` Protocol, backend/src/testpilot/ai_provider/base.py, backend/src/testpilot/ai_provider/cloud.py, backend/src/testpilot/ai_provider/fake.py (Req: FR-102) - depends on T258
+- [X] T266 [US10] [Backend] Server-side citation validation: `context_builder.extract_citable_entities` indexes exactly the test case/run/issue entities present in the request's own bounded `grounding_data` (never `Project.settings`); `assistant/service._resolve_citations` keeps a provider-reported citation only if it matches that index — silently dropping hallucinated, foreign-Organization, or prompt-injected references — and resolves `title`/`url` from server-fetched data only, never from the model's output; `ChatCitationPublic` API schema, backend/src/testpilot/assistant/context_builder.py, backend/src/testpilot/assistant/service.py, backend/src/testpilot/assistant/schemas.py, backend/src/testpilot/api/v1/assistant.py (Req: FR-102) - depends on T265
+- [X] T267 [US10] [Frontend] Render each validated citation as a direct link (icon + entity title) below a grounded assistant response, frontend/src/app/(dashboard)/assistant/page.tsx, frontend/src/features/assistant/useAssistantChat.ts (Req: FR-102) - depends on T266
+- [X] T268 [US10] [Testing] Citation test coverage: valid citations resolve with correct id/title/url; no citations for an ungrounded answer; a foreign-Organization entity id is rejected; a nonexistent/hallucinated entity id is rejected; a prompt-injection payload embedded in project data cannot manufacture a citation; `Project.settings` never reachable via a citation; citation rendering (chip/link + no-citation case); an E2E scenario proving a real test case's citation link resolves to the real entity — all existing assistant tests remain green, backend/tests/unit/test_assistant_citations.py, backend/tests/unit/test_ai_provider_cloud.py, backend/tests/contract/test_assistant_chat.py, frontend/tests/unit/pages/assistant.test.tsx, frontend/tests/e2e/assistant.spec.ts (Req: FR-102) - depends on T267
+
+**Checkpoint**: `referenced_entities` in a `POST /assistant/chat` response for a grounded question
+contains only server-validated citations, each with a working link to the real entity; a
+malicious/hallucinating provider cannot make an unauthorized, foreign, or fabricated entity
+appear in a response (proven by `test_chat_never_returns_a_citation_to_another_organizations_entity`
+and the `_resolve_citations` unit tests); 416/416 backend tests pass (ruff/mypy clean), 40/40
+frontend tests pass (lint/typecheck/build clean), and all three assistant E2E scenarios pass.
 
 ---
 
@@ -769,7 +787,7 @@ isolation, and leave the codebase in a release-ready state.
 - **US7 (Issues, P2)**: Depends on US4 (can originate from a result) but also independently usable for manual issues once US2 exists.
 - **US8 (Reports, P2)**: Depends on US4 (test run data) and US7 (issue data).
 - **US9 (Notifications, P2)**: Depends on US4 and US5 (the events it notifies about).
-- **US10 (AI Assistant, P3, Future)**: Depends only on US1 (org context); scaffolded (T177-T181), then fully implemented (T256-T264) — see Phase 15's post-implementation record.
+- **US10 (AI Assistant, P3, Future)**: Depends only on US1 (org context); scaffolded (T177-T181), then fully implemented including citations (T256-T268) — see Phase 15's post-implementation record.
 - **US11 (Multi-member Orgs, P3, Future)**: Depends only on US1; scaffold-only in this task list.
 - **US12 (Subscription Architecture, P3)**: Delivered incrementally inside Phase 6 (billing) rather than as its own phase, since spec.md frames it as cross-cutting architecture, not a standalone user flow.
 
@@ -823,8 +841,9 @@ Task: "Implement JWT access-token sign/verify utilities - backend/src/testpilot/
 10. Add Phase 16 (Reports, US8) → validate quickstart.md Section 10.
 11. Add Phase 17 (Notifications, US9) → validate quickstart.md Section 11.
 12. Add Phase 15 (AI Assistant, US10, Future) — originally a coming-soon scaffold with no
-    functional validation; later completed (T256-T264) into a fully functional chat feature
-    validated against 399 backend + 38 frontend tests and a dedicated E2E spec.
+    functional validation; later completed (T256-T264) into a fully functional chat feature,
+    then extended (T265-T268) with server-validated citation support; validated against 416
+    backend + 40 frontend tests and three dedicated E2E specs.
 13. Run Phases 18-22 (hardening passes) against everything built so far.
 14. Run Phases 23-25 (Docker, CI/CD, Kubernetes manifests).
 15. Run Phase 26 (final integration) as the release gate.
@@ -856,26 +875,39 @@ With multiple developers, once Phase 6 completes:
 - Tests are mandatory here, not optional, per the constitution's Test-First (NON-NEGOTIABLE) principle — write the test, confirm it fails, then implement.
 - Commit after each task or logical group, per repository convention.
 - Stop at any Checkpoint to validate a story independently before continuing.
-- Total: 264 tasks across 26 phases (255 original + T256-T264 added post-implementation, see
-  below). MVP-critical path (Phases 1-14, 16-26, excluding the explicitly Future-labeled tasks
-  within Phases 6 and 16): the vast majority of the 264 — T083, T084 (Phase 6), T177-T181 (Phase
-  15 scaffold), and T188 (Phase 16) remain Future-scope/scaffold-only tasks; every other task is
-  MVP, including all 14 CLI tasks (T242-T255) distributed per-domain per the constitution's CLI
-  Interface principle (see the build-order note near the top of this file). Phase 15 as a whole
-  is no longer scaffold-only: T256-T264 delivered a fully functional AI QA Assistant on top of
-  the T177-T181 scaffold — it remains outside the *original* MVP-critical path (it was never
-  required for the "URL to tested and reported" core loop) but is fully implemented and verified.
+- Total: 268 tasks across 26 phases (255 original + T256-T264 added post-implementation + T265-T268
+  added for FR-102 citation support, see below). MVP-critical path (Phases 1-14, 16-26, excluding
+  the explicitly Future-labeled tasks within Phases 6 and 16): the vast majority of the 268 —
+  T083, T084 (Phase 6), T177-T181 (Phase 15 scaffold), and T188 (Phase 16) remain
+  Future-scope/scaffold-only tasks; every other task is MVP, including all 14 CLI tasks
+  (T242-T255) distributed per-domain per the constitution's CLI Interface principle (see the
+  build-order note near the top of this file). Phase 15 as a whole is no longer scaffold-only:
+  T256-T268 delivered a fully functional, fully cited AI QA Assistant on top of the T177-T181
+  scaffold — it remains outside the *original* MVP-critical path (it was never required for the
+  "URL to tested and reported" core loop) but is fully implemented and verified.
 - **Post-analysis remediation record**: T241 (account-deletion endpoint, DATA-004) and T242-T255 (14 distributed per-domain CLI tasks) were added after a `/speckit-analyze` pass found a real coverage gap and a constitution-sequencing issue respectively. T238 itself was not removed — it was revised in place (same ID, scope narrowed from "implement every CLI command" to "assemble the already-built commands into one entrypoint"), so no previously-valid task was deleted; its dependencies were updated to point at the new distributed tasks instead of raw library modules.
 - **Post-implementation record (AI QA Assistant, Phase 15)**: T256-T264 were added after the AI
   QA Assistant chat feature (deferred by Phase 15's original "Scaffold Only" scope) was actually
   built and verified in a follow-up session — commit `b01be8ad9fdc1143847624c9703de78117fef78a`.
-  This delivers FR-097, FR-098, FR-099, FR-100, FR-101, and FR-103 (see spec.md's updated tags on
-  each). **FR-102 (citing/linking specific project entities in a data-grounded response) was
-  deliberately left unimplemented** — `ChatResponse.referenced_entities` exists in the schema for
-  forward compatibility but is never populated by either `LLMProvider` adapter, and the frontend
-  renders no citation UI. FR-023 (the AI Assistant nav entry) was already satisfied by T180 and is
-  unaffected by this record. T181's original scaffold test (`test_assistant_stub.py`, asserting a
-  501 response) was deleted and replaced by T261's `test_assistant_chat.py`, which is why T181 is
+  This delivered FR-097, FR-098, FR-099, FR-100, FR-101, and FR-103 (see spec.md's updated tags on
+  each), with FR-102 (citations) deliberately left unimplemented in that pass —
+  `ChatResponse.referenced_entities` existed in the schema but was never populated.
+  T265-T268 closed that gap in a further follow-up session: **FR-102 is now implemented**
+  (spec.md's tag updated to "Future — Implemented"). Citations are produced via forced structured
+  tool-use (`CloudLLMProvider.chat()`'s `submit_chat_response`; `FakeLLMProvider`'s deterministic
+  equivalent) rather than parsed from free text, then independently re-validated server-side
+  (`assistant/service._resolve_citations`) against `context_builder.extract_citable_entities`'s
+  index of exactly what was in that request's own bounded `grounding_data` — a citation the
+  provider reports is kept only if it matches an entity actually present there; a hallucinated
+  ID, an ID belonging to a different Organization/project, or an ID a prompt-injection payload
+  embedded in project data tried to plant is silently dropped, never surfaced to the client.
+  `title`/`url` on every surviving citation are resolved from data the server itself fetched,
+  never from the model's output, so no arbitrary URL or ID can reach a response, and
+  `Project.settings` is never reachable via a citation (it was never in `grounding_data` to begin
+  with). The chat UI renders each citation as a direct link to the real entity. FR-023 (the AI
+  Assistant nav entry) was already satisfied by T180 and is unaffected by this record. T181's
+  original scaffold test (`test_assistant_stub.py`, asserting a 501 response) was deleted and
+  replaced by T261's `test_assistant_chat.py`, which is why T181 is
   annotated "superseded" above rather than left silently orphaned.
 - **Requirement-coverage note**: every spec.md functional requirement is either cited directly by a task's `(Req: ...)` tag, covered by a range citation (e.g., "FR-041 to FR-044"), or is one of the following Future-scope "must not preclude a later redesign" requirements that this task list satisfies through architectural choice rather than a dedicated buildable task: FR-034 (project tagging — precluded by nothing in the projects schema, T088), FR-048 (authenticated-flow analysis — precluded by nothing in T125's interface-based engine), FR-058 (bulk test-case operations — precluded by nothing in T101's service layer), FR-077 (parallel execution — precluded by nothing in T137's per-case orchestration loop), FR-078 (run cancellation — precluded by nothing in T136's status enum), FR-117 (notification channels beyond in-app — precluded by nothing in T190's notification schema), FR-118 (per-user notification preferences — precluded by nothing in T190's notification schema), FR-011 (additional auth methods such as SSO/OAuth — precluded by nothing in T042/T049's session model). None of these eight require code today; they require that today's code not paint the project into a corner, which the cited MVP tasks already ensure. The same logic covers INT-005, INT-006, and INT-007 (payment gateway, CI/CD webhook triggers, chat-platform notifications — all explicitly Future Scope) and SEC-005 (the MVP satisfies "never store site-under-test credentials" by simply never building that capability anywhere in this task list, not by a task that enforces an absence).
 - **Non-functional / success-criteria validation note**: NFR-001 to NFR-003 (dashboard/report/run-trigger latency targets) and every SC-001 to SC-010 success criterion are outcome-level measurements, not individually buildable tasks — they are what Phase 26's quickstart execution (T234-T239) validates the finished system against, per quickstart.md's own structure. If any measurement fails during Phase 26, the fix is a task added to the relevant earlier phase, not a new Phase 26 task.

@@ -10,10 +10,11 @@ would be, just without an actual model call.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from testpilot.ai_provider.base import (
     AIProviderError,
+    ChatCitation,
     ChatContext,
     ChatResponse,
     FailureAnalysis,
@@ -108,6 +109,31 @@ def _form_cases(page: PageSnapshot, form: FormSnapshot) -> list[GeneratedTestCas
     return [positive, negative, edge]
 
 
+def _first_citable_id(grounding_data: dict[str, Any], key: str) -> str | None:
+    entities = grounding_data.get(key) or []
+    if entities and isinstance(entities[0], dict) and entities[0].get("id"):
+        return str(entities[0]["id"])
+    return None
+
+
+def _fake_citations(grounding_data: dict[str, Any] | None) -> list[ChatCitation]:
+    """Deterministic FR-102 citation stand-in: cites the first test case,
+    test run, and issue actually present in `grounding_data`, if any —
+    derived entirely from the given context, same as every other
+    `FakeLLMProvider` method, never hardcoded/arbitrary IDs."""
+    if not grounding_data:
+        return []
+
+    citations: list[ChatCitation] = []
+    if (test_case_id := _first_citable_id(grounding_data, "test_cases")) is not None:
+        citations.append(ChatCitation(entity_type="test_case", entity_id=test_case_id))
+    if (test_run_id := _first_citable_id(grounding_data, "recent_runs")) is not None:
+        citations.append(ChatCitation(entity_type="test_run", entity_id=test_run_id))
+    if (issue_id := _first_citable_id(grounding_data, "issues")) is not None:
+        citations.append(ChatCitation(entity_type="issue", entity_id=issue_id))
+    return citations
+
+
 class FakeLLMProvider:
     """Deterministic in-memory `LLMProvider` (satisfies the Protocol structurally)."""
 
@@ -159,4 +185,5 @@ class FakeLLMProvider:
         return ChatResponse(
             message=f"(fake assistant) I received your message: {last_user_message!r}",
             grounded=context.grounding_data is not None,
+            referenced_entities=_fake_citations(context.grounding_data),
         )
