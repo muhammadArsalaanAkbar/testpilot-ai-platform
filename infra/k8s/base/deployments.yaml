@@ -55,6 +55,24 @@ spec:
             limits:
               cpu: "1"
               memory: 512Mi
+          # Cold start (alembic migration check + app init) was observed
+          # taking ~18-20s in a local minikube dry run (nested-virtualization
+          # overhead; a real cluster may be faster or slower) -- without
+          # this, livenessProbe's own initialDelaySeconds: 10 below fires
+          # before the process is listening at all, and kubelet kills a
+          # perfectly healthy-but-still-starting container (observed: ~4
+          # restarts per pod before it happened to stabilize). A startupProbe
+          # holds off liveness/readiness entirely until it succeeds once --
+          # only then do their own schedules begin, so this changes nothing
+          # about steady-state liveness/readiness behavior, only startup.
+          # periodSeconds 5 x failureThreshold 12 = 60s allowance, ~3x the
+          # observed cold start for headroom on a slower/busier cluster.
+          startupProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 12
           # NFR-010: liveness has no dependency checks (api/v1/health.py's
           # own docstring) — restarts the process only if it is itself
           # wedged, not if Postgres/Redis are briefly unreachable (that is
